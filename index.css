@@ -877,6 +877,36 @@ button {
   to { transform: rotate(360deg); }
 }
 
+/* iPhone 触感用的透明 label，盖在每个能点的东西上（见脚本里的 touchable） */
+.haptic {
+  position: absolute;
+  inset: 0;
+  z-index: 999;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.haptic.is-under {
+  z-index: -1;
+}
+
+.haptic.is-flat {
+  z-index: auto;
+}
+
+.haptic input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  visibility: hidden;
+}
+
+/* 结尾页整页都能点，爱心按钮要留在整页那层 label 的上面 */
+.ending-heart {
+  z-index: 1000;
+}
+
 /* 点按反馈：手指落点荡开一圈光，溅出几粒火星。星空里用冷色 */
 .tap-ring {
   position: absolute;

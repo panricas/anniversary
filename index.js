@@ -81,27 +81,66 @@
 
   // 点按反馈：凡是能点的地方，手上震一下、耳朵里响一声、落点荡开一圈光
   //   tap 普通按钮  soft 点空白处  open 打开  launch 进相册  close 关闭/返回  star 点亮星星  heart 爱心  swipe 甩照片
+  // 把「收起来/移走」推迟到这次点击处理完之后。iPhone 的触感要等点击走完才触发，
+  // 被点的东西要是在处理途中就没了，那一下触感也跟着没了
+  const later = (fn) => setTimeout(fn, 0);
+
   const feedback = (() => {
+    // 安卓的震动时长（毫秒）。太短马达转不起来，手上等于没感觉，所以最短也给到十几毫秒
     const BUZZ = {
-      tap: 8, soft: 5, close: 6, swipe: 6, star: 10,
-      open: [10, 50, 16], launch: [8, 30, 8, 30, 24], heart: [12, 60, 18]
+      tap: 22, soft: 14, close: 18, swipe: 16, star: 26,
+      open: [22, 60, 34], launch: [16, 40, 16, 40, 48], heart: [26, 70, 40]
     };
 
-    // iPhone 的浏览器没有震动接口，借系统开关控件切换时自带的那一下（iOS 17.4 起才有）
-    const tick = el('label');
-    tick.style.display = 'none';
-    tick.setAttribute('aria-hidden', 'true');
-    const toggle = el('input');
-    toggle.type = 'checkbox';
-    toggle.setAttribute('switch', '');
-    tick.appendChild(toggle);
+    // iPhone 的浏览器没有震动接口，系统只在「开关」控件被拨动时给一下触感（iOS 17.4 起）。
+    // 办法是给每个能点的东西盖一层透明的 label，里面连着一个看不见的开关：
+    // 手指点在 label 上，系统替我们拨了开关，触感就跟着来了。
+    // 必须是手指真的点到 label 才算数，脚本代点从 iOS 26.5 起不再触发
+    const IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const makeSwitch = (className) => {
+      const label = el('label', className);
+      label.setAttribute('aria-hidden', 'true');
+      const toggle = el('input');
+      toggle.type = 'checkbox';
+      toggle.setAttribute('switch', '');
+      toggle.tabIndex = -1;
+      // label 被点后浏览器会再替开关补一次点击，别让它冒上去被当成第二次点按
+      toggle.addEventListener('click', (e) => e.stopPropagation());
+      label.appendChild(toggle);
+      return label;
+    };
+    // where：top 盖在宿主所有内容上面（默认）；under 垫在内容下面，只接空白处；
+    // 传一个节点则紧跟在它后面，盖住它但让后面的兄弟留在上层
+    const touchable = (host, where) => {
+      if (!IOS || !host || host.querySelector(':scope > .haptic')) return;
+      const label = makeSwitch(where === 'under' ? 'haptic is-under' : where ? 'haptic is-flat' : 'haptic');
+      if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+      // 让 label 的层级只在宿主内部比较，不会盖到宿主外面的东西
+      host.style.isolation = 'isolate';
+      if (where === 'under') host.prepend(label);
+      else if (where) where.after(label);
+      else host.appendChild(label);
+    };
+    const mount = () => {
+      app.querySelectorAll('button, [data-tap]').forEach((node) => touchable(node));
+      touchable($('deck'));
+      touchable($('ending'));
+      touchable($('viewer'), 'under');
+      touchable($('cosmos'), $('cosmosCanvas'));
+    };
 
-    const buzz = (kind) => {
+    // 没盖 label 的地方（甩照片、点页面空白）在 iPhone 上只能让脚本代点，老系统有效，新系统没有
+    const tick = makeSwitch('');
+    tick.style.display = 'none';
+
+    // loose：手指落点没有 label 接着
+    const buzz = (kind, loose) => {
       try {
         if (navigator.vibrate) {
-          navigator.vibrate(BUZZ[kind] || 8);
+          navigator.vibrate(BUZZ[kind] || BUZZ.tap);
           return;
         }
+        if (!IOS || !loose) return;
         document.head.appendChild(tick);
         tick.click();
         document.head.removeChild(tick);
@@ -172,8 +211,8 @@
       setTimeout(() => ring.remove(), 650);
     };
 
-    const fire = (kind, point) => {
-      buzz(kind);
+    const fire = (kind, point, loose) => {
+      buzz(kind, loose);
       sound(kind);
       if (point && kind !== 'soft' && !reduceMotion) ripple(point);
     };
@@ -202,6 +241,8 @@
     // 所有按钮统一在这里响应；放在捕获阶段，按钮自己拦了冒泡也照样有反馈。
     // 照片堆和星空里的星星是手势判定出来的点按，由它们自己调 fire
     app.addEventListener('click', (e) => {
+      // 开关被补点的那一下不是用户的点按
+      if (e.target.matches('.haptic input')) return;
       if (e.target.closest('#deck')) return;
       const node = e.target.closest('button, [data-tap]');
       if (!node && !e.target.closest('.pages')) return;
@@ -211,10 +252,10 @@
         const rect = node.getBoundingClientRect();
         point = localPoint({ clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 });
       }
-      fire(node ? node.dataset.tap || 'tap' : 'soft', point);
+      fire(node ? node.dataset.tap || 'tap' : 'soft', point, !e.target.closest('.haptic'));
     }, true);
 
-    return { fire };
+    return { fire, mount };
   })();
 
   const countUp = (node, target, duration) => {
@@ -656,7 +697,7 @@
     };
 
     if (reduceMotion) {
-      root.addEventListener('click', () => { finish(); onStart(); }, { once: true });
+      root.addEventListener('click', () => { later(finish); onStart(); }, { once: true });
       return;
     }
 
@@ -1424,6 +1465,7 @@
         return;
       }
       drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0, time: performance.now(), last: performance.now() };
+      tapAt = null;
       cam.target = null;
       cam.vyaw = cam.vpitch = 0;
       try { root.setPointerCapture(e.pointerId); } catch (err) {}
@@ -1451,8 +1493,14 @@
       // 手指停住再松开就不甩出去
       if (tapped || performance.now() - drag.last > 80) cam.vyaw = cam.vpitch = 0;
       drag = null;
-      if (!tapped) return;
-      const point = localPoint(e);
+      tapAt = tapped ? localPoint(e) : null;
+    });
+    // 点星星要等 click 再打开卡片。手机上 click 排在 pointerup 之后才定落点，
+    // 松手那一刻就把卡片盖上来的话，这同一下点按的 click 会落到卡片外的遮罩上，卡片刚开就被关掉
+    root.addEventListener('click', (e) => {
+      const point = tapAt;
+      tapAt = null;
+      if (!point || e.target.closest('button, .viewer')) return;
       let best = -1;
       let nearest = 38;
       entry.nodes.forEach((n, i) => {
@@ -1468,13 +1516,14 @@
       view(best, { x: entry.nodes[best].sx - w / 2, y: entry.nodes[best].sy - h / 2 });
     });
     root.addEventListener('pointercancel', () => { drag = null; });
+    let tapAt = null;
 
     viewer.addEventListener('click', (e) => {
-      if (e.target !== viewer) return;
+      if (e.target !== viewer && !e.target.matches('.viewer > .haptic')) return;
       feedback.fire('close', localPoint(e));
-      closeViewer();
+      later(closeViewer);
     });
-    $('viewerClose').addEventListener('click', closeViewer);
+    $('viewerClose').addEventListener('click', () => later(closeViewer));
     $('viewerPrev').addEventListener('click', () => view(current - 1, { x: -w * 0.7, y: 0 }));
     $('viewerNext').addEventListener('click', () => view(current + 1, { x: w * 0.7, y: 0 }));
     $('cosmosBack').addEventListener('click', close);
@@ -1601,7 +1650,7 @@
     const box = $('lightbox');
     box.addEventListener('click', (e) => {
       e.stopPropagation();
-      box.hidden = true;
+      later(() => { box.hidden = true; });
     });
     return {
       open(src, caption) {
@@ -1664,6 +1713,7 @@
 
     let drag = null;
     let busy = false;
+    let tapped = null;
 
     const release = (cancelled) => {
       if (!drag) return;
@@ -1676,7 +1726,7 @@
       if (!cancelled && cards.length > 1 && (Math.abs(dx) > 90 || flick)) {
         const sign = dx > 0 ? 1 : -1;
         busy = true;
-        feedback.fire('swipe');
+        feedback.fire('swipe', null, true);
         card.node.style.transform = `translateX(${sign * 150}%) rotate(${sign * 26}deg)`;
         card.node.style.opacity = 0;
         setTimeout(() => {
@@ -1686,15 +1736,13 @@
         }, 300);
         return;
       }
-      if (!cancelled && Math.abs(dx) < 8 && duration < 400) {
-        feedback.fire(card.loaded ? 'open' : 'soft', at);
-        if (card.loaded) lightbox.open(card.src, card.caption);
-      }
+      if (!cancelled && Math.abs(dx) < 8 && duration < 400) tapped = { card, at };
       layout();
     };
 
     root.addEventListener('pointerdown', (e) => {
       if (busy || drag) return;
+      tapped = null;
       const card = cards[order[0]];
       card.node.classList.remove('is-nudging');
       card.node.style.transition = 'none';
@@ -1709,7 +1757,15 @@
     root.addEventListener('pointerup', () => release(false));
     root.addEventListener('pointercancel', () => release(true));
     // 轻点已经在 release 里处理了，这里拦住冒泡，免得再触发全局的点击爱心
-    root.addEventListener('click', (e) => e.stopPropagation());
+    // 看大图等 click 再开，道理和星空里点星星一样：松手就盖上来的话，这一下的 click 会落在大图上把它关掉
+    root.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const tap = tapped;
+      tapped = null;
+      if (!tap) return;
+      feedback.fire(tap.card.loaded ? 'open' : 'tap', tap.card.loaded ? tap.at : null);
+      if (tap.card.loaded) lightbox.open(tap.card.src, tap.card.caption);
+    });
 
     layout();
     $('deckPage').addEventListener('enter', () => {
@@ -1875,6 +1931,7 @@
   renderNumbers(elapsed);
   renderLetter();
   renderEnding();
+  feedback.mount();
   // 开场结束后再启动翻页逻辑，封面的进场动画才不会在开场底下白白播完
   intro(() => {
     music.play();
