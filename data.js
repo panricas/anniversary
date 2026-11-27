@@ -60,6 +60,8 @@ window.ANNIVERSARY = {
       title: '（第二年的一件事）',
       text: '（不一定是大事，一顿饭、一次吵架后和好都可以。）',
       photo: 'photos/t3.jpg',
+      song: 'music/11.m4a',
+      songName: '11 · 队长 / 黄礼格',
       album: [
         { src: 'photos/2023/01.jpg', title: '（照片标题）', text: '（写一句。）' },
         { src: 'photos/2023/02.jpg', title: '（照片标题）', text: '（写一句。）' },
