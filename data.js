@@ -29,7 +29,7 @@ window.ANNIVERSARY = {
       title: '在一起的那天',
       text: '（写下那天发生的事：在哪里、谁先开的口、当时的心情。）',
       photo: 'photos/t1.jpg',
-      song: 'music/wuyuetian.mp3',
+      song: 'music/wuyuetian.m4a',
       songName: '五月天 · S.H.E',
       album: [
         { src: 'photos/2021/01.jpg', title: '（第一张合照）', text: '（这张照片背后的事，一两句就好。）' },
@@ -44,7 +44,7 @@ window.ANNIVERSARY = {
       title: '第一次一起旅行',
       text: '（去了哪里，路上最好笑或者最狼狈的一件事。）',
       photo: 'photos/t2.jpg',
-      song: 'music/aishangni.mp3',
+      song: 'music/aishangni.m4a',
       songName: '爱上你 · S.H.E',
       album: [
         { src: 'photos/2022/01.jpg', title: '（出发那天）', text: '（写一句。）' },
