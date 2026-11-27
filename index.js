@@ -89,7 +89,7 @@
     // 安卓的震动时长（毫秒）。太短马达转不起来，手上等于没感觉，所以最短也给到十几毫秒
     const BUZZ = {
       tap: 22, soft: 14, close: 18, swipe: 16, star: 26,
-      open: [22, 60, 34], launch: [16, 40, 16, 40, 48], heart: [26, 70, 40]
+      open: [22, 60, 34], launch: [16, 40, 16, 40, 48], heart: [26, 70, 40], arrive: [48, 50, 24]
     };
 
     // iPhone 的浏览器没有震动接口，系统只在「开关」控件被拨动时给一下触感（iOS 17.4 起）。
@@ -137,6 +137,8 @@
     const buzz = (kind, loose) => {
       try {
         if (navigator.vibrate) {
+          // 新的一下会顶掉正在进行的长震
+          humming = false;
           navigator.vibrate(BUZZ[kind] || BUZZ.tap);
           return;
         }
@@ -144,6 +146,50 @@
         document.head.appendChild(tick);
         tick.click();
         document.head.removeChild(tick);
+      } catch (err) {}
+    };
+
+    // 长震：一段时间里手上一直在抖（穿越时光那几秒的引擎）。网页管不了震动的轻重，
+    // 只能靠「震多久、歇多久」来做：level(进度 0~1) 给出 0~1 的力度，越大震得越长、歇得越短，直到几乎连成一片
+    let humming = false;
+    let beat = 0;
+    const hush = (kind) => {
+      clearTimeout(beat);
+      beat = 0;
+      if (kind) buzz(kind, true);
+      else if (humming) navigator.vibrate(0);
+      humming = false;
+    };
+    const rumble = (ms, level) => {
+      hush();
+      try {
+        if (navigator.vibrate) {
+          const pattern = [];
+          for (let t = 0; t < ms;) {
+            // 浏览器最多收 99 段，快满了就一口气震到底
+            if (pattern.length >= 96) {
+              pattern.push(Math.round(ms - t));
+              break;
+            }
+            const k = level(t / ms);
+            const on = 60 + 140 * k;
+            const off = 30 - 22 * k;
+            pattern.push(Math.round(on), Math.round(off));
+            t += on + off;
+          }
+          humming = navigator.vibrate(pattern);
+          return;
+        }
+        if (!IOS) return;
+        // iPhone 没有长震，只能让脚本连着拨开关，一下一下地敲；iOS 26.5 起这招没用了，那就是没有
+        const began = performance.now();
+        const knock = () => {
+          const p = (performance.now() - began) / ms;
+          if (p >= 1) return;
+          buzz('tap', true);
+          beat = setTimeout(knock, 150 - 90 * level(p));
+        };
+        knock();
       } catch (err) {}
     };
 
@@ -255,7 +301,7 @@
       fire(node ? node.dataset.tap || 'tap' : 'soft', point, !e.target.closest('.haptic'));
     }, true);
 
-    return { fire, mount };
+    return { fire, mount, rumble, hush };
   })();
 
   const countUp = (node, target, duration) => {
@@ -1076,11 +1122,12 @@
       if (node.textContent !== text) node.textContent = text;
     };
 
+    // 穿越的快慢：坐稳、点火停一拍，中间加速再减速，到站后再缓一拍。画面和手上的震动都跟着它走
+    const surgeAt = (p) => Math.pow(Math.sin(Math.PI * Math.min(1, Math.max(0, (p - 0.16) / 0.74))), 1.4);
+
     const drawWarp = (now, step) => {
       const p = Math.min(1, (now - began) / warpMs);
-      // 坐稳、点火停一拍，中间加速再减速，到站后再缓一拍
-      const t = Math.min(1, Math.max(0, (p - 0.16) / 0.74));
-      const surge = Math.pow(Math.sin(Math.PI * t), 1.4);
+      const surge = surgeAt(p);
       const speed = 0.0012 + 0.05 * surge;
       // 飞船在轻轻压弯，隧道尽头相对准星左右漂
       const cx = w / 2 + Math.sin(now / 1100) * w * 0.04 * surge;
@@ -1177,7 +1224,11 @@
       setText('hudSpeed', `${(surge * 0.99).toFixed(2)} c`);
       setText('hudBack', `${entry.from - months} 个月`);
 
-      if (p >= 1) arrive(now);
+      if (p >= 1) {
+        // 引擎停下，落地时顿一下
+        feedback.hush('arrive');
+        arrive(now);
+      }
     };
 
     const drawSky = (now, step) => {
@@ -1440,6 +1491,7 @@
         mode = 'warp';
         began = now;
         root.classList.add('is-warp');
+        feedback.rumble(warpMs, surgeAt);
       }
       if (!looping) {
         looping = true;
@@ -1449,6 +1501,7 @@
 
     const close = () => {
       closeViewer();
+      feedback.hush();
       root.classList.add('is-leaving');
       setTimeout(() => {
         root.hidden = true;
@@ -1458,13 +1511,8 @@
 
     root.addEventListener('pointerdown', (e) => {
       if (e.target.closest('button, .viewer')) return;
-      if (mode === 'warp') {
-        // 轻触跳过穿越
-        began = performance.now() - warpMs;
-        feedback.fire('tap', localPoint(e));
-        return;
-      }
-      drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0, time: performance.now(), last: performance.now() };
+      if (mode === 'warp') return;
+      drag ={ id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0, time: performance.now(), last: performance.now() };
       tapAt = null;
       cam.target = null;
       cam.vyaw = cam.vpitch = 0;
@@ -1498,6 +1546,12 @@
     // 点星星要等 click 再打开卡片。手机上 click 排在 pointerup 之后才定落点，
     // 松手那一刻就把卡片盖上来的话，这同一下点按的 click 会落到卡片外的遮罩上，卡片刚开就被关掉
     root.addEventListener('click', (e) => {
+      if (mode === 'warp') {
+        // 轻触跳过穿越。同样放在 click 里：按下那一刻就到站的话，刚冒出来的返回按钮会接住这同一下点按
+        began = performance.now() - warpMs;
+        feedback.fire('tap', localPoint(e));
+        return;
+      }
       const point = tapAt;
       tapAt = null;
       if (!point || e.target.closest('button, .viewer')) return;
