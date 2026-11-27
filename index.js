@@ -749,9 +749,9 @@
     return { firework, burst, rain, size: () => ({ w, h }) };
   })();
 
-  // 音乐：只有一个播放器，放的是「眼下这首」。
-  // 可以有一首从开场就放的背景音乐（data.music）；时间线每个节点还可以各带一首（song），
-  // 飞船到站时换上，回到正文也接着放，直到进了另一年的相册
+  // 音乐：只有一个播放器。
+  // 时间线每个节点可以各带一首歌（song）：飞船到站时响起，点「返回」离开星空就停。
+  // 另外可以有一首背景音乐（data.music），在正文里放，右上角的 ♪ 按钮管的是它
   const music = (() => {
     const button = $('music');
     const label = $('cosmosSong');
@@ -759,7 +759,7 @@
     audio.loop = true;
     audio.preload = 'auto';
     let src = '';
-    // 她自己按了暂停：之后换歌只换不响，等她再按
+    // 她自己按 ♪ 把背景音乐停了：回到正文不再自动接上，等她再按
     let off = false;
     // 已经在点按里静音起播，等到站再出声
     let queued = false;
@@ -785,10 +785,21 @@
       else audio.play().catch(() => {});
     });
 
+    const reset = () => {
+      clearInterval(fading);
+      audio.muted = false;
+      audio.volume = 1;
+    };
     const load = (next) => {
+      reset();
       src = next;
       audio.src = next;
+    };
+    const bgm = () => {
+      if (!data.music) return;
+      load(data.music);
       button.hidden = false;
+      if (!off) audio.play().catch(() => {});
     };
     // 音量慢慢推上来。iPhone 不让网页调音量，在它上面等于直接开始
     const swell = () => {
@@ -803,23 +814,16 @@
     };
 
     return {
-      play() {
-        if (!data.music) return;
-        load(data.music);
-        audio.play().catch(() => {});
-      },
+      play: bgm,
       // 进相册的那一下点按里调用。手机只准在点按里开始播放，而到站是几秒以后的事，
       // 所以先静音放起来，到站时拨回开头、打开声音
       cue(song, name) {
         label.textContent = song && name ? `♪ ${name}` : '';
         label.hidden = true;
-        // 这一年没配歌，或者正放着的就是这首：原来放什么接着放
-        if (!song || song === src) {
-          label.hidden = !label.textContent;
-          return;
-        }
-        load(song);
-        if (off) return;
+        // 这一年没配歌：星空里是安静的（有背景音乐的话，它接着放）
+        if (!song) return;
+        if (song === src) reset();
+        else load(song);
         queued = true;
         audio.muted = true;
         audio.play().catch(() => {});
@@ -831,6 +835,35 @@
         try { audio.currentTime = 0; } catch (err) {}
         audio.muted = false;
         swell();
+      },
+      // 点「返回」离开星空：这一年的歌收声停掉，有背景音乐就换回背景音乐
+      stop() {
+        const silent = queued;
+        queued = false;
+        held = false;
+        label.hidden = true;
+        if (data.music) {
+          if (src !== data.music) bgm();
+          return;
+        }
+        clearInterval(fading);
+        if (audio.paused) return;
+        if (silent) {
+          audio.pause();
+          audio.muted = false;
+          return;
+        }
+        let v = audio.volume;
+        fading = setInterval(() => {
+          v -= 0.2;
+          if (v > 0) {
+            audio.volume = v;
+            return;
+          }
+          clearInterval(fading);
+          audio.pause();
+          audio.volume = 1;
+        }, 40);
       },
       // hold / release：星空相册里播视频时先停一下，看完再接着放
       hold() {
@@ -1630,6 +1663,7 @@
     const close = () => {
       closeViewer();
       feedback.hush();
+      music.stop();
       root.classList.add('is-leaving');
       setTimeout(() => {
         root.hidden = true;

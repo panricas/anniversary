@@ -12,7 +12,7 @@ window.ANNIVERSARY = {
   // 封面大图，留空则用纯色封面
   cover: 'photos/cover.jpg',
 
-  // 从开场就放的背景音乐，例如 'music/bgm.mp3'；留空就是开场没有音乐
+  // 正文里放的背景音乐，例如 'music/bgm.mp3'；留空就是正文没有音乐，只有星空相册里有歌
   music: '',
 
   // 时间线：每个节点占一整屏，date 开头四位是年份，会显示成背景上的大数字
@@ -21,7 +21,7 @@ window.ANNIVERSARY = {
   //   title 星星旁边的小字，尽量短；text 点开后显示在下面的话
   //   poster 视频的封面图，可以不写
   // 不写 album 的节点，相册里只有 photo 这一张
-  // song 是这一年的歌：飞船到站时开始放，回到正文也接着放，直到进了另一年的相册；songName 显示在星空左上角
+  // song 是这一年的歌：飞船到站时开始放，点「返回」离开星空就停；songName 显示在星空左上角
   //   文件放到 music/ 目录下；文件不在时不出声，也不显示歌名
   timeline: [
     {
