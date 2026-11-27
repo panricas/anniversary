@@ -156,12 +156,14 @@
     const hush = (kind) => {
       clearTimeout(beat);
       beat = 0;
+      try { quiet(); } catch (err) {}
       if (kind) buzz(kind, true);
       else if (humming) navigator.vibrate(0);
       humming = false;
     };
     const rumble = (ms, level) => {
       hush();
+      roar(ms, level);
       try {
         if (navigator.vibrate) {
           const pattern = [];
@@ -227,17 +229,105 @@
       heart: () => { bell(659, 0, 0.45, 0.12); bell(988, 0.1, 0.45, 0.11); bell(1319, 0.2, 0.7, 0.1); },
       launch: () => { voice(196, 0, 0.6, 0.1, 'triangle', 1568); bell(2093, 0.42, 0.6, 0.07); }
     };
+    const ready = () => {
+      if (!AudioCtx) return false;
+      if (!ctx) {
+        ctx = new AudioCtx();
+        master = ctx.createGain();
+        master.gain.value = 0.7;
+        master.connect(ctx.destination);
+      }
+      if (ctx.state !== 'running') ctx.resume();
+      return true;
+    };
     const sound = (kind) => {
-      if (!AudioCtx) return;
       try {
-        if (!ctx) {
-          ctx = new AudioCtx();
-          master = ctx.createGain();
-          master.gain.value = 0.7;
-          master.connect(ctx.destination);
-        }
-        if (ctx.state !== 'running') ctx.resume();
-        (SOUND[kind] || SOUND.tap)();
+        if (ready()) (SOUND[kind] || SOUND.tap)();
+      } catch (err) {}
+    };
+
+    // 引擎声：长震时一起响，跟着同一条力度曲线起伏。低沉的机身声带着一颤一颤的抖动，上面盖一层风声。
+    // iPhone 的网页没法让马达长震，把音量开大时这股低频能让机身跟着麻一点，算是替补
+    let engine = null;
+    const quiet = () => {
+      if (!engine) return;
+      const { out, sources, until } = engine;
+      engine = null;
+      const now = ctx.currentTime;
+      if (now >= until) return;
+      out.gain.cancelScheduledValues(now);
+      out.gain.setValueAtTime(out.gain.value, now);
+      out.gain.linearRampToValueAtTime(0, now + 0.12);
+      sources.forEach((node) => node.stop(now + 0.15));
+    };
+    const roar = (ms, level) => {
+      try {
+        if (!ready()) return;
+        quiet();
+        const t = ctx.currentTime;
+        const span = ms / 1000;
+        const curve = (fn) => Float32Array.from({ length: 48 }, (_, i) => fn(level(i / 47)));
+        const follow = (param, fn) => param.setValueCurveAtTime(curve(fn), t, span);
+
+        const out = ctx.createGain();
+        out.gain.setValueAtTime(0, t);
+        out.gain.linearRampToValueAtTime(1, t + 0.3);
+        out.gain.setValueAtTime(1, t + span - 0.35);
+        out.gain.linearRampToValueAtTime(0, t + span);
+        out.connect(master);
+
+        const hull = ctx.createOscillator();
+        hull.type = 'sawtooth';
+        follow(hull.frequency, (k) => 80 + 60 * k);
+        // 高八度再叠一层：手机喇叭放不出太低的音，一两百赫兹这段才是它震得动机身的地方
+        const growl = ctx.createOscillator();
+        growl.type = 'square';
+        follow(growl.frequency, (k) => 160 + 120 * k);
+        const mix = ctx.createGain();
+        mix.gain.value = 0.6;
+        const tone = ctx.createBiquadFilter();
+        tone.type = 'lowpass';
+        follow(tone.frequency, (k) => 320 + 800 * k);
+        const body = ctx.createGain();
+        follow(body.gain, (k) => 0.1 + 0.4 * k);
+        // 抖动：音量每秒忽大忽小十几到三十次，越快抖得越密
+        const purr = ctx.createGain();
+        purr.gain.value = 0.65;
+        const shake = ctx.createOscillator();
+        follow(shake.frequency, (k) => 14 + 16 * k);
+        const depth = ctx.createGain();
+        depth.gain.value = 0.35;
+        shake.connect(depth);
+        depth.connect(purr.gain);
+        hull.connect(tone);
+        growl.connect(mix);
+        mix.connect(tone);
+        tone.connect(body);
+        body.connect(purr);
+        purr.connect(out);
+
+        const hiss = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+        const samples = hiss.getChannelData(0);
+        for (let i = 0; i < samples.length; i++) samples[i] = Math.random() * 2 - 1;
+        const air = ctx.createBufferSource();
+        air.buffer = hiss;
+        air.loop = true;
+        const band = ctx.createBiquadFilter();
+        band.type = 'bandpass';
+        band.Q.value = 0.8;
+        follow(band.frequency, (k) => 420 + 1900 * k);
+        const wind = ctx.createGain();
+        follow(wind.gain, (k) => 0.004 + 0.07 * k);
+        air.connect(band);
+        band.connect(wind);
+        wind.connect(out);
+
+        const sources = [hull, growl, shake, air];
+        sources.forEach((node) => {
+          node.start(t);
+          node.stop(t + span + 0.05);
+        });
+        engine = { out, sources, until: t + span };
       } catch (err) {}
     };
 
