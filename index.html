@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#110d0c" />
+    <title>五周年</title>
+    <link rel="stylesheet" href="./index.css" />
+  </head>
+  <body>
+    <div class="app" id="app">
+      <main class="pages" id="pages">
+        <section class="page hero" id="hero">
+          <div class="hero-bg" id="heroBg"></div>
+          <div class="hero-main">
+            <p class="hero-eyebrow anim" style="--i: 0">OUR ANNIVERSARY</p>
+            <div class="hero-numeral anim" style="--i: 1">
+              <span class="hero-digit" id="heroYears">5</span>
+              <span class="hero-unit">周年</span>
+            </div>
+            <h1 class="hero-names anim" style="--i: 4">
+              <span id="heroMe"></span>
+              <i>&amp;</i>
+              <span id="heroHer"></span>
+            </h1>
+            <p class="hero-dates anim" style="--i: 5" id="heroDates"></p>
+          </div>
+          <div class="hero-counter anim" style="--i: 8">
+            <p class="eyebrow">我们已经在一起</p>
+            <p class="hero-counter-days"><span id="counterDays">0</span><em>天</em></p>
+            <p class="hero-counter-clock" id="counterClock"></p>
+          </div>
+        </section>
+
+        <!-- 时间线的每个节点会作为一整屏插入到这里，每一屏上有进入星空相册的按钮 -->
+
+        <section class="page deck-page" id="deckPage">
+          <header class="page-head">
+            <p class="eyebrow anim" style="--i: 0">照片</p>
+            <h2 class="anim" style="--i: 1">被留下来的瞬间</h2>
+          </header>
+          <div class="deck" id="deck"></div>
+          <p class="deck-meta anim" style="--i: 3">
+            <b id="deckIndex">01</b> / <span id="deckTotal">00</span>
+            <span class="deck-tip">左右滑动翻看</span>
+          </p>
+        </section>
+
+        <section class="page numbers-page" id="numbersPage">
+          <header class="page-head">
+            <p class="eyebrow anim" style="--i: 0">数字</p>
+            <h2 class="anim" style="--i: 1">换一种方式数一数</h2>
+          </header>
+          <div class="numbers" id="numbersList"></div>
+        </section>
+
+        <section class="page letter-page" id="letterPage">
+          <header class="page-head">
+            <p class="eyebrow anim" style="--i: 0">一封信</p>
+            <h2 class="anim" style="--i: 1">想对你说</h2>
+          </header>
+          <button class="envelope anim" style="--i: 3" id="envelope" type="button" aria-label="打开信封">
+            <span class="envelope-back"></span>
+            <span class="envelope-paper"></span>
+            <span class="envelope-front"></span>
+            <span class="envelope-flap"></span>
+            <span class="envelope-seal">
+              <svg viewBox="0 0 32 30" aria-hidden="true"><path d="M16 28.5C6 21 1.5 15.5 1.5 9.5c0-4.500 3.500-8 7.800-8 2.700 0 5.100 1.400 6.700 3.600 1.600-2.200 4-3.600 6.700-3.600 4.300 0 7.800 3.500 7.800 8 0 6-4.500 11.500-14.500 19z" /></svg>
+            </span>
+          </button>
+          <p class="letter-tip anim" style="--i: 5">点一下信封</p>
+        </section>
+
+        <section class="page ending" id="ending">
+          <p class="ending-text" id="endingText"></p>
+          <button class="ending-heart anim" style="--i: 8" id="endingHeart" type="button" aria-label="点一下">
+            <svg viewBox="0 0 32 30" aria-hidden="true"><path d="M16 28.5C6 21 1.5 15.5 1.5 9.5c0-4.500 3.500-8 7.800-8 2.700 0 5.100 1.400 6.700 3.600 1.600-2.200 4-3.600 6.700-3.600 4.300 0 7.800 3.500 7.800 8 0 6-4.500 11.500-14.500 19z" /></svg>
+          </button>
+          <p class="ending-tip anim" style="--i: 10">点一下爱心，或者点屏幕任意位置</p>
+        </section>
+      </main>
+
+      <canvas class="fx" id="fx"></canvas>
+      <div class="progress"><i id="progressBar"></i></div>
+      <div class="swipe-hint" id="swipeHint">
+        <svg viewBox="0 0 24 14" aria-hidden="true"><path d="M2 12 12 2l10 10" /></svg>
+        <span>上滑</span>
+      </div>
+      <button class="music" id="music" type="button" aria-label="背景音乐" hidden>♪</button>
+
+      <div class="sheet" id="sheet" hidden>
+        <article class="sheet-scroll" id="letterBody"></article>
+        <button class="sheet-close" id="sheetClose" type="button">收起</button>
+      </div>
+
+      <div class="lightbox" id="lightbox" hidden>
+        <img id="lightboxImg" alt="" />
+        <p id="lightboxCaption"></p>
+      </div>
+
+      <!-- 星空相册：从时间线的某一年进入，坐在飞船驾驶舱里穿过时光隧道，到达后这一年的照片是天上的星星 -->
+      <div class="cosmos" id="cosmos" hidden>
+        <canvas id="cosmosCanvas"></canvas>
+        <div class="cosmos-flash"></div>
+
+        <!-- 驾驶舱：穿越时人坐在飞船里，透过舷窗往前看；到达后舱盖打开，人飘进星空 -->
+        <div class="cockpit" id="cockpit">
+          <div class="cockpit-glass"></div>
+
+          <svg class="hud" viewBox="0 0 200 200" aria-hidden="true">
+            <circle class="hud-ring" cx="100" cy="100" r="86" />
+            <circle class="hud-ticks" cx="100" cy="100" r="72" />
+            <path class="hud-line" d="M100 4v12M100 184v12M4 100h12M184 100h12M82 100h-12M118 100h12M100 82v-12M100 118v12" />
+            <path class="hud-line" d="M38 46l-8-8M162 46l8-8M38 154l-8 8M162 154l8 8" />
+            <circle class="hud-dot" cx="100" cy="100" r="2" />
+          </svg>
+          <p class="hud-data hud-left"><span>航速</span><b id="hudSpeed"></b></p>
+          <p class="hud-data hud-right"><span>已回溯</span><b id="hudBack"></b></p>
+
+          <svg class="cockpit-canopy" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+            <defs>
+              <linearGradient id="hullFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#141a34" />
+                <stop offset="0.5" stop-color="#0a0d1d" />
+                <stop offset="1" stop-color="#04050b" />
+              </linearGradient>
+            </defs>
+            <path fill="url(#hullFill)" fill-rule="evenodd" d="M-2-2H102V102H-2ZM3 78 11.500 17Q13 11.500 19 10.400 50 5 81 10.400 87 11.500 88.500 17L97 78Z" />
+            <path class="hull-seam" d="M0 31h9.400M100 31h-9.400M0 54h6.200M100 54h-6.200M27 0l1.200 8.700M73 0l-1.200 8.700" />
+            <path class="hull-glow" d="M3 78 11.500 17Q13 11.500 19 10.400 50 5 81 10.400 87 11.500 88.500 17L97 78" />
+            <path class="hull-frame" d="M3 78 11.500 17Q13 11.500 19 10.400 50 5 81 10.400 87 11.500 88.500 17L97 78" />
+            <path class="hull-rail" d="M3 78 11.500 17Q13 11.500 19 10.400 50 5 81 10.400 87 11.500 88.500 17L97 78" />
+            <path class="hull-edge" d="M3 78 11.500 17Q13 11.500 19 10.400 50 5 81 10.400 87 11.500 88.500 17L97 78" />
+            <rect class="hull-panel" x="38" y="-1" width="24" height="5.400" rx="0.800" />
+            <rect class="lamp lamp-a" x="41" y="1.700" width="3" height="0.900" />
+            <rect class="lamp lamp-b" x="46" y="1.700" width="3" height="0.900" />
+            <rect class="lamp lamp-c" x="51" y="1.700" width="3" height="0.900" />
+            <rect class="lamp lamp-a" x="56" y="1.700" width="3" height="0.900" />
+          </svg>
+
+          <!-- 挂在舱顶的小爱心，加速时会被甩起来 -->
+          <div class="charm">
+            <i></i>
+            <svg viewBox="0 0 32 30" aria-hidden="true"><path d="M16 28.500C6 21 1.500 15.500 1.500 9.500c0-4.500 3.500-8 7.800-8 2.700 0 5.100 1.400 6.700 3.600 1.600-2.200 4-3.600 6.700-3.600 4.300 0 7.800 3.500 7.800 8 0 6-4.500 11.500-14.500 19z" /></svg>
+          </div>
+
+          <p class="warp-skip">轻触跳过</p>
+
+          <svg class="cockpit-dash" viewBox="0 0 390 270" aria-hidden="true">
+            <defs>
+              <linearGradient id="dashFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#222b52" />
+                <stop offset="0.3" stop-color="#10152c" />
+                <stop offset="1" stop-color="#04050b" />
+              </linearGradient>
+              <radialGradient id="dashLight" cx="0.5" cy="0" r="0.8">
+                <stop offset="0" stop-color="#cfe0ff" stop-opacity="0.85" />
+                <stop offset="0.5" stop-color="#7f9cff" stop-opacity="0.25" />
+                <stop offset="1" stop-color="#6c8cff" stop-opacity="0" />
+              </radialGradient>
+              <linearGradient id="dashMetal" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#46527e" />
+                <stop offset="1" stop-color="#151a33" />
+              </linearGradient>
+              <radialGradient id="dashDial" cx="0.5" cy="0.4" r="0.7">
+                <stop offset="0" stop-color="#101a3a" />
+                <stop offset="1" stop-color="#04060f" />
+              </radialGradient>
+              <clipPath id="dashClip">
+                <path d="M0 270V64C44 52 92 46 126 42 150 39 160 18 195 18s45 21 69 24c34 4 82 10 126 22v206Z" />
+              </clipPath>
+              <pattern id="dashScan" width="4" height="3" patternUnits="userSpaceOnUse">
+                <rect width="4" height="1" fill="#9fc4ff" opacity="0.08" />
+              </pattern>
+            </defs>
+
+            <path d="M0 270V64C44 52 92 46 126 42 150 39 160 18 195 18s45 21 69 24c34 4 82 10 126 22v206Z" fill="url(#dashFill)" />
+            <rect class="dash-light" width="390" height="230" fill="url(#dashLight)" clip-path="url(#dashClip)" />
+            <path class="dash-glow" d="M0 64C44 52 92 46 126 42 150 39 160 18 195 18s45 21 69 24c34 4 82 10 126 22" />
+            <path class="dash-edge" d="M0 64C44 52 92 46 126 42 150 39 160 18 195 18s45 21 69 24c34 4 82 10 126 22" />
+            <path class="dash-seam" d="M104 62v208M286 62v208M104 170h182" />
+
+            <!-- 中间的主屏：年月一路往回跳 -->
+            <rect class="screen" x="121" y="38" width="148" height="98" rx="10" />
+            <rect x="121" y="38" width="148" height="98" rx="10" fill="url(#dashScan)" />
+            <text class="screen-label" id="warpLabel" x="197" y="60"></text>
+            <text class="screen-date" id="warpDate" x="195" y="101"></text>
+            <text class="screen-dest" id="warpDest" x="196" y="124"></text>
+
+            <!-- 左边：航速表 -->
+            <circle class="dial" cx="60" cy="126" r="36" />
+            <circle class="dial-ticks" cx="60" cy="126" r="29" />
+            <path class="dial-arc" d="M39.500 146.500A29 29 0 1 1 80.500 146.500" />
+            <line class="gauge-needle" x1="60" y1="126" x2="60" y2="101" />
+            <circle class="dial-hub" cx="60" cy="126" r="3.500" />
+            <text class="dial-label" x="61" y="142">航速</text>
+
+            <!-- 右边：倒着走的钟 -->
+            <circle class="dial" cx="330" cy="126" r="36" />
+            <circle class="clock-ticks" cx="330" cy="126" r="30" />
+            <line class="clock-hour" x1="330" y1="126" x2="330" y2="110" />
+            <line class="clock-minute" x1="330" y1="126" x2="330" y2="100" />
+            <circle class="dial-hub" cx="330" cy="126" r="3.500" />
+            <text class="dial-label" x="331" y="142">时间</text>
+
+            <g class="keys">
+              <rect x="126" y="146" width="18" height="10" rx="2" />
+              <rect x="150" y="146" width="18" height="10" rx="2" />
+              <rect x="174" y="146" width="18" height="10" rx="2" />
+              <rect x="198" y="146" width="18" height="10" rx="2" />
+              <rect x="222" y="146" width="18" height="10" rx="2" />
+              <rect x="246" y="146" width="18" height="10" rx="2" />
+            </g>
+
+            <!-- 左下：一排排指示灯；右下：推到底的油门 -->
+            <g class="lights">
+              <circle cx="34" cy="198" r="3.500" /><circle cx="52" cy="198" r="3.500" /><circle cx="70" cy="198" r="3.500" /><circle cx="88" cy="198" r="3.500" />
+              <circle cx="34" cy="216" r="3.500" /><circle cx="52" cy="216" r="3.500" /><circle cx="70" cy="216" r="3.500" /><circle cx="88" cy="216" r="3.500" />
+              <circle cx="34" cy="234" r="3.500" /><circle cx="52" cy="234" r="3.500" /><circle cx="70" cy="234" r="3.500" /><circle cx="88" cy="234" r="3.500" />
+            </g>
+            <rect class="throttle-track" x="326" y="186" width="8" height="64" rx="4" />
+            <path class="throttle-marks" d="M342 192h8M342 206h5M342 220h8M342 234h5M342 248h8" />
+            <g class="throttle-knob">
+              <rect x="312" y="236" width="36" height="16" rx="5" fill="url(#dashMetal)" />
+              <path d="M318 241h24M318 247h24" />
+            </g>
+
+            <!-- 操纵杆 -->
+            <g class="yoke">
+              <path d="M184 226 176 270h38l-8-44Z" fill="url(#dashMetal)" />
+              <rect x="140" y="204" width="110" height="15" rx="7" fill="url(#dashMetal)" />
+              <rect x="122" y="180" width="24" height="66" rx="12" fill="url(#dashMetal)" />
+              <rect x="244" y="180" width="24" height="66" rx="12" fill="url(#dashMetal)" />
+              <circle cx="195" cy="212" r="19" fill="url(#dashMetal)" />
+              <path class="yoke-heart" d="M195 221.500c-7-5.200-10-9-10-13.200a5.400 5.400 0 0 1 10-2.800 5.400 5.400 0 0 1 10 2.800c0 4.200-3 8-10 13.200z" />
+            </g>
+          </svg>
+        </div>
+
+        <header class="cosmos-head">
+          <p class="cosmos-year" id="cosmosYear"></p>
+          <h2 id="cosmosTitle"></h2>
+        </header>
+        <button class="cosmos-back" id="cosmosBack" type="button">返回</button>
+        <p class="cosmos-tip" id="cosmosTip"></p>
+
+        <div class="viewer" id="viewer" hidden>
+          <article class="viewer-card" id="viewerCard">
+            <div class="viewer-media" id="viewerMedia"></div>
+            <div class="viewer-text">
+              <p class="viewer-index" id="viewerIndex"></p>
+              <h3 id="viewerTitle"></h3>
+              <p class="viewer-words" id="viewerText"></p>
+            </div>
+          </article>
+          <nav class="viewer-nav">
+            <button id="viewerPrev" type="button">上一颗</button>
+            <button id="viewerClose" type="button">回到星空</button>
+            <button id="viewerNext" type="button">下一颗</button>
+          </nav>
+        </div>
+      </div>
+
+      <div class="intro" id="intro">
+        <canvas id="introCanvas"></canvas>
+        <p class="intro-to" id="introTo"></p>
+        <p class="intro-hint">轻触开启</p>
+      </div>
+    </div>
+
+    <script src="./data.js"></script>
+    <script src="./index.js"></script>
+  </body>
+</html>
