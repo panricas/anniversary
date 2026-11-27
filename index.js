@@ -195,47 +195,202 @@
       } catch (err) {}
     };
 
-    // 音效现场合成，不用另外带音频文件
+    // 音效现场合成，不用另外带音频文件。
+    // 走的是电影预告片那一路：往下砸的重击、铜管似的长音、大厅里的回响。
+    // 手机喇叭放不出一百多赫兹以下的声音，所以低音都先压一遍，靠压出来的泛音让人「听见」那一下
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     let ctx = null;
     let master = null;
-    const voice = (freq, delay, length, peak, type, slideTo) => {
-      const t = ctx.currentTime + delay;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = type || 'sine';
-      osc.frequency.setValueAtTime(freq, t);
-      if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t + length);
-      gain.gain.setValueAtTime(0.0001, t);
-      gain.gain.exponentialRampToValueAtTime(peak, t + 0.008);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + length);
-      osc.connect(gain);
-      gain.connect(master);
-      osc.start(t);
-      osc.stop(t + length + 0.03);
+    // 回响的入口
+    let hall = null;
+    // 一段白噪声：撞上去的那声「嘭」、扫过去的风都从它来
+    let dust = null;
+    const bend = (fn) => Float32Array.from({ length: 1025 }, (_, i) => fn(i / 512 - 1));
+    const GRIT = bend((x) => Math.tanh(3 * x));
+    // 出口的软限幅，输入按 ±3 算：小声原样过，叠得太响的地方压圆，不至于爆音
+    const CEILING = bend((x) => {
+      const u = Math.abs(3 * x);
+      return Math.sign(x) * (u <= 0.5 ? u : 0.5 + 0.45 * Math.tanh((u - 0.5) / 0.45));
+    });
+    // wet 是送去回响的量
+    const emit = (node, wet) => {
+      node.connect(master);
+      if (!wet) return;
+      const send = ctx.createGain();
+      send.gain.value = wet;
+      node.connect(send);
+      send.connect(hall);
     };
-    // 一个带泛音的音，听起来像敲了一下小铃
-    const bell = (freq, delay, length, peak) => {
-      voice(freq, delay, length, peak);
-      voice(freq * 2.01, delay, length * 0.6, peak * 0.3);
+    const noise = (t, length) => {
+      const src = ctx.createBufferSource();
+      src.buffer = dust;
+      src.loop = true;
+      src.start(t, Math.random() * 1.5);
+      src.stop(t + length + 0.05);
+      return src;
+    };
+    // 重击，像一面大鼓：往下掉的鼓音（上面叠一个高八度的，小喇叭靠它才听得见），
+    // 加上鼓槌敲上去的那声脆响和一团往下沉的闷响
+    const boom = (delay, peak, from, to, length, wet) => {
+      const t = ctx.currentTime + delay;
+      const drive = ctx.createWaveShaper();
+      drive.curve = GRIT;
+      const level = ctx.createGain();
+      level.gain.value = peak;
+      drive.connect(level);
+      const drum = (ratio, share, span, type) => {
+        const osc = ctx.createOscillator();
+        osc.type = type;
+        osc.frequency.setValueAtTime(from * ratio, t);
+        osc.frequency.exponentialRampToValueAtTime(to * ratio, t + span * 0.45);
+        const body = ctx.createGain();
+        body.gain.setValueAtTime(0.0001, t);
+        body.gain.exponentialRampToValueAtTime(share, t + 0.005);
+        body.gain.exponentialRampToValueAtTime(0.0001, t + span);
+        osc.connect(body);
+        body.connect(drive);
+        osc.start(t);
+        osc.stop(t + span + 0.05);
+      };
+      drum(1, 1, length, 'sine');
+      drum(2, 0.7, length * 0.7, 'triangle');
+      drum(7, 0.5, 0.05, 'sine');
+
+      const thud = ctx.createBiquadFilter();
+      thud.type = 'lowpass';
+      thud.frequency.setValueAtTime(6000, t);
+      thud.frequency.exponentialRampToValueAtTime(420, t + 0.22);
+      const crack = ctx.createGain();
+      crack.gain.setValueAtTime(0.0001, t);
+      crack.gain.exponentialRampToValueAtTime(1.5, t + 0.004);
+      crack.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+      noise(t, 0.32).connect(thud);
+      thud.connect(crack);
+      crack.connect(level);
+      emit(level, wet);
+    };
+    // 铜管似的长音：几把略微跑调的锯齿波叠在一起，滤波器猛地张开再慢慢合上
+    const braam = (freq, delay, length, peak, wet) => {
+      const t = ctx.currentTime + delay;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.Q.value = 1.5;
+      filter.frequency.setValueAtTime(300, t);
+      filter.frequency.exponentialRampToValueAtTime(3600, t + 0.09);
+      filter.frequency.exponentialRampToValueAtTime(520, t + length);
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(peak, t + 0.05);
+      gain.gain.exponentialRampToValueAtTime(peak * 0.55, t + length * 0.5);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + length);
+      [[1, 0.26], [1.007, 0.26], [0.993, 0.26], [2.004, 0.3], [3.003, 0.22], [4.01, 0.16]].forEach(([ratio, share]) => {
+        const osc = ctx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.value = freq * ratio;
+        const part = ctx.createGain();
+        part.gain.value = share;
+        osc.connect(part);
+        part.connect(filter);
+        osc.start(t);
+        osc.stop(t + length + 0.05);
+      });
+      filter.connect(gain);
+      emit(gain, wet);
+    };
+    // 一阵风扫过去：音高从 from 滑到 to，crest 是最响的那一刻落在全程的哪里
+    const sweep = (delay, length, peak, from, to, crest, wet) => {
+      const t = ctx.currentTime + delay;
+      const band = ctx.createBiquadFilter();
+      band.type = 'bandpass';
+      band.Q.value = 1.4;
+      band.frequency.setValueAtTime(from, t);
+      band.frequency.exponentialRampToValueAtTime(to, t + length);
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(peak, t + length * crest);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + length);
+      noise(t, length).connect(band);
+      band.connect(gain);
+      emit(gain, wet);
+    };
+    // 重击之上的一点金属余音，几乎全送进回响里
+    const glint = (freq, delay, length, peak, wet) => {
+      const t = ctx.currentTime + delay;
+      [[1, 1], [2.76, 0.35]].forEach(([ratio, share]) => {
+        const osc = ctx.createOscillator();
+        osc.frequency.value = freq * ratio;
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(peak * share, t + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + length * (ratio > 1 ? 0.5 : 1));
+        osc.connect(gain);
+        emit(gain, wet);
+        osc.start(t);
+        osc.stop(t + length + 0.05);
+      });
     };
     const SOUND = {
-      tap: () => voice(1047, 0, 0.09, 0.16, 'sine', 1568),
-      soft: () => voice(1319, 0, 0.07, 0.05),
-      swipe: () => voice(620, 0, 0.16, 0.07, 'triangle', 240),
-      close: () => { bell(1175, 0, 0.16, 0.11); bell(784, 0.07, 0.26, 0.1); },
-      open: () => { bell(784, 0, 0.5, 0.11); bell(1175, 0.08, 0.5, 0.1); bell(1568, 0.16, 0.7, 0.1); },
-      star: () => { bell(1568, 0, 0.3, 0.08); bell(2349, 0.05, 0.3, 0.07); bell(3136, 0.1, 0.45, 0.06); },
-      heart: () => { bell(659, 0, 0.45, 0.12); bell(988, 0.1, 0.45, 0.11); bell(1319, 0.2, 0.7, 0.1); },
-      launch: () => { voice(196, 0, 0.6, 0.1, 'triangle', 1568); bell(2093, 0.42, 0.6, 0.07); }
+      tap: () => boom(0, 0.4, 260, 72, 0.36, 0.4),
+      soft: () => boom(0, 0.16, 220, 90, 0.22, 0.25),
+      swipe: () => { sweep(0, 0.34, 0.32, 2600, 500, 0.3, 0.3); boom(0.2, 0.2, 200, 80, 0.24, 0.3); },
+      close: () => { sweep(0, 0.3, 0.22, 1800, 300, 0.2, 0.4); boom(0.05, 0.34, 210, 60, 0.42, 0.5); },
+      open: () => {
+        sweep(0, 0.28, 0.24, 400, 2400, 0.9, 0.3);
+        boom(0.26, 0.46, 280, 64, 0.6, 0.5);
+        braam(110, 0.26, 1.5, 0.3, 0.5);
+        braam(164.8, 0.26, 1.5, 0.2, 0.5);
+      },
+      star: () => { boom(0, 0.34, 240, 76, 0.4, 0.5); glint(1174.7, 0.02, 1.4, 0.12, 0.9); glint(1760, 0.08, 1.6, 0.08, 0.9); },
+      // 两下心跳，第二下带出一个长音
+      heart: () => {
+        boom(0, 0.46, 230, 66, 0.3, 0.4);
+        boom(0.24, 0.4, 200, 60, 0.42, 0.5);
+        braam(98, 0.24, 1.8, 0.24, 0.6);
+        braam(146.8, 0.24, 1.8, 0.17, 0.6);
+      },
+      // 先吸一口气，再整个砸下来，接着就是穿越的风声
+      launch: () => {
+        sweep(0, 0.55, 0.3, 300, 3200, 0.92, 0.3);
+        boom(0.52, 0.55, 300, 58, 0.9, 0.6);
+        braam(73.4, 0.52, 2.2, 0.34, 0.5);
+        braam(110, 0.52, 2.2, 0.24, 0.5);
+      }
     };
     const ready = () => {
       if (!AudioCtx) return false;
       if (!ctx) {
         ctx = new AudioCtx();
+        const pre = ctx.createGain();
+        pre.gain.value = 1 / 3;
+        const ceiling = ctx.createWaveShaper();
+        ceiling.curve = CEILING;
+        ceiling.oversample = '2x';
+        pre.connect(ceiling);
+        ceiling.connect(ctx.destination);
         master = ctx.createGain();
         master.gain.value = 0.7;
-        master.connect(ctx.destination);
+        master.connect(pre);
+
+        dust = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+        const grains = dust.getChannelData(0);
+        for (let i = 0; i < grains.length; i++) grains[i] = Math.random() * 2 - 1;
+
+        // 回响：一段两秒多、越来越弱的噪声，当作大厅的脉冲响应
+        const tail = ctx.createBuffer(2, Math.round(ctx.sampleRate * 2.4), ctx.sampleRate);
+        for (let ch = 0; ch < 2; ch++) {
+          const samples = tail.getChannelData(ch);
+          for (let i = 0; i < samples.length; i++) samples[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / samples.length, 2.6);
+        }
+        const room = ctx.createConvolver();
+        room.buffer = tail;
+        const dark = ctx.createBiquadFilter();
+        dark.type = 'lowpass';
+        dark.frequency.value = 3200;
+        hall = ctx.createGain();
+        hall.gain.value = 0.5;
+        hall.connect(room);
+        room.connect(dark);
+        dark.connect(master);
       }
       if (ctx.state !== 'running') ctx.resume();
       return true;
@@ -276,11 +431,8 @@
         out.connect(master);
 
         // 白噪声过带通就是风声；一宽一窄两层，窄的那层高一截，听起来才是「咻」而不是「沙」
-        const hiss = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
-        const samples = hiss.getChannelData(0);
-        for (let i = 0; i < samples.length; i++) samples[i] = Math.random() * 2 - 1;
         const air = ctx.createBufferSource();
-        air.buffer = hiss;
+        air.buffer = dust;
         air.loop = true;
         const layer = (q, pitch, loud) => {
           const band = ctx.createBiquadFilter();
@@ -893,7 +1045,10 @@
     let shape = -1;
     let timer = 0;
 
-    $('introTo').textContent = data.her ? `给 ${data.her}` : '';
+    if (data.her) {
+      $('introTo').textContent = '给';
+      $('introTo').appendChild(el('span', 'gothic', data.her));
+    }
 
     const finish = () => {
       running = false;
@@ -2000,7 +2155,7 @@
 
     const days = elapsed().days;
     const items = [
-      { value: days, unit: '天', label: '在一起的日子' },
+      { value: days, unit: '天', label: '相爱的日子' },
       { value: monthsSince(), unit: '个月', label: '一起翻过的月历' },
       { value: Math.floor(days / 7), unit: '个', label: '一起过的周末' },
       { value: days * 24, unit: '小时', label: '有你的时间' }
@@ -2140,7 +2295,7 @@
     });
   };
 
-  document.title = `${data.me || ''} & ${data.her || ''} · ${years} 周年`;
+  document.title = `${data.me || ''} & ${data.her || ''} · 相爱 ${years} 周年`;
   const elapsed = renderHero();
   renderMoments();
   renderDeck();

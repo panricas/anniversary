@@ -2,11 +2,12 @@
 // 照片放到 photos/ 目录下；照片不存在时页面会标出期望的路径
 // 页面按手机竖屏设计，照片尽量用竖图；时间线里的横图会自动改用相框展示
 window.ANNIVERSARY = {
-  me: '你的名字',
-  her: '她的名字',
+  // 两个人的名字，页面上用哥特体显示（字体只管英文字母，写中文会退回普通字体）
+  me: 'PF',
+  her: 'PW',
 
-  // 在一起的日期，格式 YYYY-MM-DD，也可以带时间 YYYY-MM-DD HH:mm
-  startDate: '2021-12-12',
+  // 相爱的日期，格式 YYYY-MM-DD，也可以带时间 YYYY-MM-DD HH:mm
+  startDate: '2021-12-28',
   years: 5,
 
   // 封面大图，留空则用纯色封面
@@ -96,7 +97,7 @@ window.ANNIVERSARY = {
     },
     {
       date: '2026.12',
-      title: '五周年',
+      title: '相爱五周年',
       text: '（写到今天。）',
       photo: 'photos/t6.jpg',
       album: [

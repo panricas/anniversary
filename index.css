@@ -1,3 +1,10 @@
+/* 名字用的哥特体：UnifrakturCook，SIL Open Font License，授权全文在 fonts/OFL.txt */
+@font-face {
+  font-family: "Anniversary Gothic";
+  src: url("./fonts/UnifrakturCook-Bold.ttf") format("truetype");
+  font-display: swap;
+}
+
 :root {
   --bg: #110d0c;
   --ink: #f4eadd;
@@ -257,6 +264,22 @@ button {
 .hero-names i {
   font-family: var(--numeral);
   color: var(--rose);
+}
+
+.gothic {
+  font-family: "Anniversary Gothic", var(--serif);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+
+.hero-names .gothic {
+  font-size: 1.5em;
+  line-height: 1.1;
+}
+
+.intro-to .gothic {
+  margin-left: 0.45em;
+  font-size: 1.3em;
 }
 
 .hero-dates {
