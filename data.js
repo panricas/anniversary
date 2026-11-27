@@ -12,8 +12,8 @@ window.ANNIVERSARY = {
   // 封面大图，留空则用纯色封面
   cover: 'photos/cover.jpg',
 
-  // 背景音乐：把 mp3 放到 music/bgm.mp3 就会出现播放按钮；文件不在时按钮自动隐藏
-  music: 'music/bgm.mp3',
+  // 从开场就放的背景音乐，例如 'music/bgm.mp3'；留空就是开场没有音乐
+  music: '',
 
   // 时间线：每个节点占一整屏，date 开头四位是年份，会显示成背景上的大数字
   // album 是这一年的星空相册：点「这一年的相册」后坐飞船倒回这一年，每一项是天上的一颗星
@@ -21,12 +21,16 @@ window.ANNIVERSARY = {
   //   title 星星旁边的小字，尽量短；text 点开后显示在下面的话
   //   poster 视频的封面图，可以不写
   // 不写 album 的节点，相册里只有 photo 这一张
+  // song 是这一年的歌：飞船到站时开始放，回到正文也接着放，直到进了另一年的相册；songName 显示在星空左上角
+  //   文件放到 music/ 目录下；文件不在时不出声，也不显示歌名
   timeline: [
     {
       date: '2021.12',
       title: '在一起的那天',
       text: '（写下那天发生的事：在哪里、谁先开的口、当时的心情。）',
       photo: 'photos/t1.jpg',
+      song: 'music/wuyuetian.mp3',
+      songName: '五月天 · S.H.E',
       album: [
         { src: 'photos/2021/01.jpg', title: '（第一张合照）', text: '（这张照片背后的事，一两句就好。）' },
         { src: 'photos/2021/02.jpg', title: '（那天的晚饭）', text: '（当时在想什么。）' },
@@ -40,6 +44,8 @@ window.ANNIVERSARY = {
       title: '第一次一起旅行',
       text: '（去了哪里，路上最好笑或者最狼狈的一件事。）',
       photo: 'photos/t2.jpg',
+      song: 'music/aishangni.mp3',
+      songName: '爱上你 · S.H.E',
       album: [
         { src: 'photos/2022/01.jpg', title: '（出发那天）', text: '（写一句。）' },
         { src: 'photos/2022/02.jpg', title: '（路上）', text: '（写一句。）' },

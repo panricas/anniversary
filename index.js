@@ -749,28 +749,90 @@
     return { firework, burst, rain, size: () => ({ w, h }) };
   })();
 
-  // 背景音乐：浏览器不允许自动播放，所以在开场那一下点击里开始
+  // 音乐：只有一个播放器，放的是「眼下这首」。
+  // 可以有一首从开场就放的背景音乐（data.music）；时间线每个节点还可以各带一首（song），
+  // 飞船到站时换上，回到正文也接着放，直到进了另一年的相册
   const music = (() => {
-    if (!data.music) return { play() {}, hold() {}, release() {} };
     const button = $('music');
-    const audio = new Audio(data.music);
+    const label = $('cosmosSong');
+    const audio = new Audio();
     audio.loop = true;
-    button.hidden = false;
+    audio.preload = 'auto';
+    let src = '';
+    // 她自己按了暂停：之后换歌只换不响，等她再按
+    let off = false;
+    // 已经在点按里静音起播，等到站再出声
+    let queued = false;
+    let held = false;
+    let fading = 0;
 
     const sync = () => button.classList.toggle('is-playing', !audio.paused);
     audio.addEventListener('play', sync);
     audio.addEventListener('pause', sync);
     // 文件不在或者放不了，就不留一个点了没反应的按钮
-    audio.addEventListener('error', () => { button.hidden = true; });
+    audio.addEventListener('error', () => {
+      src = '';
+      queued = false;
+      audio.muted = false;
+      button.hidden = true;
+      label.textContent = '';
+      label.hidden = true;
+    });
     button.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (audio.paused) audio.play().catch(() => {});
-      else audio.pause();
+      off = !audio.paused;
+      if (off) audio.pause();
+      else audio.play().catch(() => {});
     });
-    // hold / release：星空相册里播视频时先停一下，看完再接着放
-    let held = false;
+
+    const load = (next) => {
+      src = next;
+      audio.src = next;
+      button.hidden = false;
+    };
+    // 音量慢慢推上来。iPhone 不让网页调音量，在它上面等于直接开始
+    const swell = () => {
+      clearInterval(fading);
+      let v = 0;
+      audio.volume = 0;
+      fading = setInterval(() => {
+        v = Math.min(1, v + 0.05);
+        audio.volume = v;
+        if (v >= 1) clearInterval(fading);
+      }, 80);
+    };
+
     return {
-      play: () => audio.play().catch(() => {}),
+      play() {
+        if (!data.music) return;
+        load(data.music);
+        audio.play().catch(() => {});
+      },
+      // 进相册的那一下点按里调用。手机只准在点按里开始播放，而到站是几秒以后的事，
+      // 所以先静音放起来，到站时拨回开头、打开声音
+      cue(song, name) {
+        label.textContent = song && name ? `♪ ${name}` : '';
+        label.hidden = true;
+        // 这一年没配歌，或者正放着的就是这首：原来放什么接着放
+        if (!song || song === src) {
+          label.hidden = !label.textContent;
+          return;
+        }
+        load(song);
+        if (off) return;
+        queued = true;
+        audio.muted = true;
+        audio.play().catch(() => {});
+      },
+      drop() {
+        label.hidden = !label.textContent;
+        if (!queued) return;
+        queued = false;
+        try { audio.currentTime = 0; } catch (err) {}
+        audio.muted = false;
+        swell();
+      },
+      // hold / release：星空相册里播视频时先停一下，看完再接着放
       hold() {
         if (audio.paused) return;
         held = true;
@@ -1176,6 +1238,7 @@
       nextMeteor = now + 2500;
       root.classList.remove('is-warp');
       root.classList.add('is-sky');
+      music.drop();
       cockpit.style.transform = '';
       cockpit.style.setProperty('--surge', 0);
     };
@@ -1515,6 +1578,7 @@
     const open = (item) => {
       entry = build(item);
       if (!entry.nodes.length) return;
+      music.cue(item.song, item.songName);
       const nodes = entry.nodes;
       root.className = 'cosmos';
       root.hidden = false;

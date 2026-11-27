@@ -1648,6 +1648,14 @@ button {
   letter-spacing: 0.06em;
 }
 
+.cosmos-song {
+  margin-top: 6px;
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: rgba(238, 243, 255, 0.62);
+}
+
 .cosmos-back,
 .viewer-nav button {
   padding: 5px 16px;
