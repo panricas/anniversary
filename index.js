@@ -246,8 +246,7 @@
       } catch (err) {}
     };
 
-    // 引擎声：长震时一起响，跟着同一条力度曲线起伏。低沉的机身声带着一颤一颤的抖动，上面盖一层风声。
-    // iPhone 的网页没法让马达长震，把音量开大时这股低频能让机身跟着麻一点，算是替补
+    // 穿越时的风声：一声拉长的「咻——」，和长震一起响，跟着同一条力度曲线走，越快越尖越响
     let engine = null;
     const quiet = () => {
       if (!engine) return;
@@ -276,53 +275,28 @@
         out.gain.linearRampToValueAtTime(0, t + span);
         out.connect(master);
 
-        const hull = ctx.createOscillator();
-        hull.type = 'sawtooth';
-        follow(hull.frequency, (k) => 80 + 60 * k);
-        // 高八度再叠一层：手机喇叭放不出太低的音，一两百赫兹这段才是它震得动机身的地方
-        const growl = ctx.createOscillator();
-        growl.type = 'square';
-        follow(growl.frequency, (k) => 160 + 120 * k);
-        const mix = ctx.createGain();
-        mix.gain.value = 0.6;
-        const tone = ctx.createBiquadFilter();
-        tone.type = 'lowpass';
-        follow(tone.frequency, (k) => 320 + 800 * k);
-        const body = ctx.createGain();
-        follow(body.gain, (k) => 0.1 + 0.4 * k);
-        // 抖动：音量每秒忽大忽小十几到三十次，越快抖得越密
-        const purr = ctx.createGain();
-        purr.gain.value = 0.65;
-        const shake = ctx.createOscillator();
-        follow(shake.frequency, (k) => 14 + 16 * k);
-        const depth = ctx.createGain();
-        depth.gain.value = 0.35;
-        shake.connect(depth);
-        depth.connect(purr.gain);
-        hull.connect(tone);
-        growl.connect(mix);
-        mix.connect(tone);
-        tone.connect(body);
-        body.connect(purr);
-        purr.connect(out);
-
-        const hiss = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+        // 白噪声过带通就是风声；一宽一窄两层，窄的那层高一截，听起来才是「咻」而不是「沙」
+        const hiss = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
         const samples = hiss.getChannelData(0);
         for (let i = 0; i < samples.length; i++) samples[i] = Math.random() * 2 - 1;
         const air = ctx.createBufferSource();
         air.buffer = hiss;
         air.loop = true;
-        const band = ctx.createBiquadFilter();
-        band.type = 'bandpass';
-        band.Q.value = 0.8;
-        follow(band.frequency, (k) => 420 + 1900 * k);
-        const wind = ctx.createGain();
-        follow(wind.gain, (k) => 0.004 + 0.07 * k);
-        air.connect(band);
-        band.connect(wind);
-        wind.connect(out);
+        const layer = (q, pitch, loud) => {
+          const band = ctx.createBiquadFilter();
+          band.type = 'bandpass';
+          band.Q.value = q;
+          follow(band.frequency, pitch);
+          const gain = ctx.createGain();
+          follow(gain.gain, loud);
+          air.connect(band);
+          band.connect(gain);
+          gain.connect(out);
+        };
+        layer(1.6, (k) => 700 + 2300 * k, (k) => 0.17 + 0.26 * k);
+        layer(7, (k) => 1500 + 4300 * k, (k) => 0.12 + 0.36 * k);
 
-        const sources = [hull, growl, shake, air];
+        const sources = [air];
         sources.forEach((node) => {
           node.start(t);
           node.stop(t + span + 0.05);
