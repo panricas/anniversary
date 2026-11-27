@@ -60,7 +60,7 @@
             <p class="eyebrow anim" style="--i: 0">一封信</p>
             <h2 class="anim" style="--i: 1">想对你说</h2>
           </header>
-          <button class="envelope anim" style="--i: 3" id="envelope" type="button" aria-label="打开信封">
+          <button class="envelope anim" style="--i: 3" id="envelope" type="button" data-tap="open" aria-label="打开信封">
             <span class="envelope-back"></span>
             <span class="envelope-paper"></span>
             <span class="envelope-front"></span>
@@ -74,7 +74,7 @@
 
         <section class="page ending" id="ending">
           <p class="ending-text" id="endingText"></p>
-          <button class="ending-heart anim" style="--i: 8" id="endingHeart" type="button" aria-label="点一下">
+          <button class="ending-heart anim" style="--i: 8" id="endingHeart" type="button" data-tap="heart" aria-label="点一下">
             <svg viewBox="0 0 32 30" aria-hidden="true"><path d="M16 28.5C6 21 1.5 15.5 1.5 9.5c0-4.500 3.500-8 7.800-8 2.700 0 5.100 1.400 6.700 3.600 1.600-2.200 4-3.600 6.700-3.600 4.300 0 7.800 3.500 7.800 8 0 6-4.500 11.500-14.500 19z" /></svg>
           </button>
           <p class="ending-tip anim" style="--i: 10">点一下爱心，或者点屏幕任意位置</p>
@@ -91,10 +91,10 @@
 
       <div class="sheet" id="sheet" hidden>
         <article class="sheet-scroll" id="letterBody"></article>
-        <button class="sheet-close" id="sheetClose" type="button">收起</button>
+        <button class="sheet-close" id="sheetClose" type="button" data-tap="close">收起</button>
       </div>
 
-      <div class="lightbox" id="lightbox" hidden>
+      <div class="lightbox" id="lightbox" data-tap="close" hidden>
         <img id="lightboxImg" alt="" />
         <p id="lightboxCaption"></p>
       </div>
@@ -242,7 +242,7 @@
           <p class="cosmos-year" id="cosmosYear"></p>
           <h2 id="cosmosTitle"></h2>
         </header>
-        <button class="cosmos-back" id="cosmosBack" type="button">返回</button>
+        <button class="cosmos-back" id="cosmosBack" type="button" data-tap="close">返回</button>
         <p class="cosmos-tip" id="cosmosTip"></p>
 
         <div class="viewer" id="viewer" hidden>
@@ -256,13 +256,13 @@
           </article>
           <nav class="viewer-nav">
             <button id="viewerPrev" type="button">上一颗</button>
-            <button id="viewerClose" type="button">回到星空</button>
+            <button id="viewerClose" type="button" data-tap="close">回到星空</button>
             <button id="viewerNext" type="button">下一颗</button>
           </nav>
         </div>
       </div>
 
-      <div class="intro" id="intro">
+      <div class="intro" id="intro" data-tap="open">
         <canvas id="introCanvas"></canvas>
         <p class="intro-to" id="introTo"></p>
         <p class="intro-hint">轻触开启</p>

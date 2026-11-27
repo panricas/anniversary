@@ -12,8 +12,8 @@ window.ANNIVERSARY = {
   // 封面大图，留空则用纯色封面
   cover: 'photos/cover.jpg',
 
-  // 背景音乐，留空则不显示播放按钮，例如 'music/bgm.mp3'
-  music: '',
+  // 背景音乐：把 mp3 放到 music/bgm.mp3 就会出现播放按钮；文件不在时按钮自动隐藏
+  music: 'music/bgm.mp3',
 
   // 时间线：每个节点占一整屏，date 开头四位是年份，会显示成背景上的大数字
   // album 是这一年的星空相册：点「这一年的相册」后坐飞船倒回这一年，每一项是天上的一颗星

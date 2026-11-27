@@ -79,6 +79,144 @@
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
+  // 点按反馈：凡是能点的地方，手上震一下、耳朵里响一声、落点荡开一圈光
+  //   tap 普通按钮  soft 点空白处  open 打开  launch 进相册  close 关闭/返回  star 点亮星星  heart 爱心  swipe 甩照片
+  const feedback = (() => {
+    const BUZZ = {
+      tap: 8, soft: 5, close: 6, swipe: 6, star: 10,
+      open: [10, 50, 16], launch: [8, 30, 8, 30, 24], heart: [12, 60, 18]
+    };
+
+    // iPhone 的浏览器没有震动接口，借系统开关控件切换时自带的那一下（iOS 17.4 起才有）
+    const tick = el('label');
+    tick.style.display = 'none';
+    tick.setAttribute('aria-hidden', 'true');
+    const toggle = el('input');
+    toggle.type = 'checkbox';
+    toggle.setAttribute('switch', '');
+    tick.appendChild(toggle);
+
+    const buzz = (kind) => {
+      try {
+        if (navigator.vibrate) {
+          navigator.vibrate(BUZZ[kind] || 8);
+          return;
+        }
+        document.head.appendChild(tick);
+        tick.click();
+        document.head.removeChild(tick);
+      } catch (err) {}
+    };
+
+    // 音效现场合成，不用另外带音频文件
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    let ctx = null;
+    let master = null;
+    const voice = (freq, delay, length, peak, type, slideTo) => {
+      const t = ctx.currentTime + delay;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type || 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+      if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t + length);
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(peak, t + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + length);
+      osc.connect(gain);
+      gain.connect(master);
+      osc.start(t);
+      osc.stop(t + length + 0.03);
+    };
+    // 一个带泛音的音，听起来像敲了一下小铃
+    const bell = (freq, delay, length, peak) => {
+      voice(freq, delay, length, peak);
+      voice(freq * 2.01, delay, length * 0.6, peak * 0.3);
+    };
+    const SOUND = {
+      tap: () => voice(1047, 0, 0.09, 0.16, 'sine', 1568),
+      soft: () => voice(1319, 0, 0.07, 0.05),
+      swipe: () => voice(620, 0, 0.16, 0.07, 'triangle', 240),
+      close: () => { bell(1175, 0, 0.16, 0.11); bell(784, 0.07, 0.26, 0.1); },
+      open: () => { bell(784, 0, 0.5, 0.11); bell(1175, 0.08, 0.5, 0.1); bell(1568, 0.16, 0.7, 0.1); },
+      star: () => { bell(1568, 0, 0.3, 0.08); bell(2349, 0.05, 0.3, 0.07); bell(3136, 0.1, 0.45, 0.06); },
+      heart: () => { bell(659, 0, 0.45, 0.12); bell(988, 0.1, 0.45, 0.11); bell(1319, 0.2, 0.7, 0.1); },
+      launch: () => { voice(196, 0, 0.6, 0.1, 'triangle', 1568); bell(2093, 0.42, 0.6, 0.07); }
+    };
+    const sound = (kind) => {
+      if (!AudioCtx) return;
+      try {
+        if (!ctx) {
+          ctx = new AudioCtx();
+          master = ctx.createGain();
+          master.gain.value = 0.7;
+          master.connect(ctx.destination);
+        }
+        if (ctx.state !== 'running') ctx.resume();
+        (SOUND[kind] || SOUND.tap)();
+      } catch (err) {}
+    };
+
+    // 落点的一圈光和溅出的火星；点空白处已经有爱心或烟花了，不再叠
+    const ripple = (point) => {
+      const ring = el('i', $('cosmos').hidden ? 'tap-ring' : 'tap-ring is-cool');
+      ring.style.left = `${point.x}px`;
+      ring.style.top = `${point.y}px`;
+      const turn = rand(0, 60);
+      for (let i = 0; i < 6; i++) {
+        const spark = el('b');
+        spark.style.setProperty('--a', `${Math.round(turn + i * 60 + rand(-14, 14))}deg`);
+        spark.style.setProperty('--d', `${Math.round(-rand(34, 58))}px`);
+        ring.appendChild(spark);
+      }
+      app.appendChild(ring);
+      setTimeout(() => ring.remove(), 650);
+    };
+
+    const fire = (kind, point) => {
+      buzz(kind);
+      sound(kind);
+      if (point && kind !== 'soft' && !reduceMotion) ripple(point);
+    };
+
+    // 按下去缩一点，松手弹回来。用独立的 scale 属性，不和按钮自己的 transform 动画打架
+    const PRESSABLE = 'button, .moment-card[data-tap]';
+    let pressed = null;
+    const lift = () => {
+      if (!pressed) return;
+      const { node, anim } = pressed;
+      pressed = null;
+      anim.cancel();
+      node.animate({ scale: ['0.92', '1.06', '1'] }, { duration: 340, easing: 'cubic-bezier(0.3, 1.5, 0.5, 1)' });
+    };
+    if (!reduceMotion && app.animate) {
+      app.addEventListener('pointerdown', (e) => {
+        const node = e.target.closest(PRESSABLE);
+        if (!node) return;
+        lift();
+        pressed = { node, anim: node.animate({ scale: ['1', '0.92'] }, { duration: 110, easing: 'ease-out', fill: 'forwards' }) };
+      });
+      window.addEventListener('pointerup', lift);
+      window.addEventListener('pointercancel', lift);
+    }
+
+    // 所有按钮统一在这里响应；放在捕获阶段，按钮自己拦了冒泡也照样有反馈。
+    // 照片堆和星空里的星星是手势判定出来的点按，由它们自己调 fire
+    app.addEventListener('click', (e) => {
+      if (e.target.closest('#deck')) return;
+      const node = e.target.closest('button, [data-tap]');
+      if (!node && !e.target.closest('.pages')) return;
+      let point = localPoint(e);
+      if (node && !e.detail) {
+        // 键盘触发的点击没有坐标，落在按钮中心
+        const rect = node.getBoundingClientRect();
+        point = localPoint({ clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 });
+      }
+      fire(node ? node.dataset.tap || 'tap' : 'soft', point);
+    }, true);
+
+    return { fire };
+  })();
+
   const countUp = (node, target, duration) => {
     if (reduceMotion || !target) {
       node.textContent = target ? target.toLocaleString('en-US') : '?';
@@ -471,6 +609,8 @@
     const sync = () => button.classList.toggle('is-playing', !audio.paused);
     audio.addEventListener('play', sync);
     audio.addEventListener('pause', sync);
+    // 文件不在或者放不了，就不留一个点了没反应的按钮
+    audio.addEventListener('error', () => { button.hidden = true; });
     button.addEventListener('click', (e) => {
       e.stopPropagation();
       if (audio.paused) audio.play().catch(() => {});
@@ -1280,6 +1420,7 @@
       if (mode === 'warp') {
         // 轻触跳过穿越
         began = performance.now() - warpMs;
+        feedback.fire('tap', localPoint(e));
         return;
       }
       drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0, time: performance.now(), last: performance.now() };
@@ -1322,12 +1463,16 @@
           best = i;
         }
       });
-      if (best >= 0) view(best, { x: entry.nodes[best].sx - w / 2, y: entry.nodes[best].sy - h / 2 });
+      if (best < 0) return;
+      feedback.fire('star', { x: entry.nodes[best].sx, y: entry.nodes[best].sy });
+      view(best, { x: entry.nodes[best].sx - w / 2, y: entry.nodes[best].sy - h / 2 });
     });
     root.addEventListener('pointercancel', () => { drag = null; });
 
     viewer.addEventListener('click', (e) => {
-      if (e.target === viewer) closeViewer();
+      if (e.target !== viewer) return;
+      feedback.fire('close', localPoint(e));
+      closeViewer();
     });
     $('viewerClose').addEventListener('click', closeViewer);
     $('viewerPrev').addEventListener('click', () => view(current - 1, { x: -w * 0.7, y: 0 }));
@@ -1421,6 +1566,7 @@
         button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0c.8 7.500 4.500 11.200 12 12-7.500.8-11.200 4.500-12 12-.8-7.500-4.500-11.200-12-12 7.500-.8 11.200-4.500 12-12z" /></svg>';
         button.appendChild(el('span', '', '这一年的相册'));
         button.appendChild(el('b', '', album.length));
+        button.dataset.tap = 'launch';
         button.addEventListener('click', enter);
         body.appendChild(button);
       }
@@ -1435,7 +1581,10 @@
             page.classList.add('is-landscape');
             const card = el('figure', 'moment-card');
             card.appendChild(img);
-            if (album.length) card.addEventListener('click', enter);
+            if (album.length) {
+              card.dataset.tap = 'launch';
+              card.addEventListener('click', enter);
+            }
             page.insertBefore(card, body);
           }
         };
@@ -1518,7 +1667,7 @@
 
     const release = (cancelled) => {
       if (!drag) return;
-      const { card, dx, time } = drag;
+      const { card, dx, time, at } = drag;
       const duration = performance.now() - time;
       drag = null;
       card.node.style.transition = '';
@@ -1527,6 +1676,7 @@
       if (!cancelled && cards.length > 1 && (Math.abs(dx) > 90 || flick)) {
         const sign = dx > 0 ? 1 : -1;
         busy = true;
+        feedback.fire('swipe');
         card.node.style.transform = `translateX(${sign * 150}%) rotate(${sign * 26}deg)`;
         card.node.style.opacity = 0;
         setTimeout(() => {
@@ -1536,8 +1686,9 @@
         }, 300);
         return;
       }
-      if (!cancelled && Math.abs(dx) < 8 && duration < 400 && card.loaded) {
-        lightbox.open(card.src, card.caption);
+      if (!cancelled && Math.abs(dx) < 8 && duration < 400) {
+        feedback.fire(card.loaded ? 'open' : 'soft', at);
+        if (card.loaded) lightbox.open(card.src, card.caption);
       }
       layout();
     };
@@ -1547,7 +1698,7 @@
       const card = cards[order[0]];
       card.node.classList.remove('is-nudging');
       card.node.style.transition = 'none';
-      drag = { card, id: e.pointerId, x: e.clientX, dx: 0, time: performance.now() };
+      drag = { card, id: e.pointerId, x: e.clientX, dx: 0, time: performance.now(), at: localPoint(e) };
       try { root.setPointerCapture(e.pointerId); } catch (err) {}
     });
     root.addEventListener('pointermove', (e) => {
