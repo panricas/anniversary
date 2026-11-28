@@ -7,7 +7,7 @@ window.ANNIVERSARY = {
   her: 'PW',
 
   // 相爱的日期，格式 YYYY-MM-DD，也可以带时间 YYYY-MM-DD HH:mm
-  startDate: '2021-12-28',
+  startDate: '2021-11-28',
   years: 5,
 
   // 封面大图，留空则用纯色封面
@@ -26,7 +26,7 @@ window.ANNIVERSARY = {
   //   文件放到 music/ 目录下；文件不在时不出声，也不显示歌名
   timeline: [
     {
-      date: '2021.12',
+      date: '2021.11',
       title: '在一起的那天',
       text: '（写下那天发生的事：在哪里、谁先开的口、当时的心情。）',
       photo: 'photos/t1.jpg',
@@ -96,7 +96,7 @@ window.ANNIVERSARY = {
       ]
     },
     {
-      date: '2026.12',
+      date: '2026.11',
       title: '相爱五周年',
       text: '（写到今天。）',
       photo: 'photos/t6.jpg',
