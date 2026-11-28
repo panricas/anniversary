@@ -1255,6 +1255,72 @@
       return puffs[key];
     };
 
+    // 穿越时一颗星被拉成的光迹，头在右边：白热的细芯往后越拖越细越暗，外面裹一层带颜色的虚光，
+    // 再甩出几缕断断续续的细丝，尾巴末端碎成一截一截。逐像素算出来的，所以边是毛的
+    const TRAIL_HUES = [198, 214, 230, 248, 266, 286];
+    const trails = [];
+    const trail = (index) => {
+      if (!trails[index]) {
+        const W = 384;
+        const H = 40;
+        const sprite = document.createElement('canvas');
+        sprite.width = W;
+        sprite.height = H;
+        const g = sprite.getContext('2d');
+        const image = g.createImageData(W, H);
+        const [r, gr, b] = tint(TRAIL_HUES[index % TRAIL_HUES.length], 1, 0.7);
+        // 一维的平滑噪声：隔一段取个随机数，中间用余弦接起来
+        const noise = (knots) => {
+          const v = Array.from({ length: knots + 2 }, () => Math.random());
+          return (u) => {
+            const at = u * knots;
+            const i = Math.floor(at);
+            const f = (1 - Math.cos((at - i) * Math.PI)) / 2;
+            return v[i] * (1 - f) + v[i + 1] * f;
+          };
+        };
+        const wobble = noise(9);
+        const grain = noise(70);
+        const crumble = noise(26);
+        const wisps = Array.from({ length: 6 }, (_, i) => ({
+          side: (i % 2 ? 1 : -1) * rand(0.18, 0.62),
+          gap: noise(Math.round(rand(8, 18))),
+          cut: rand(0.38, 0.62),
+          a: rand(0.3, 0.6)
+        }));
+        for (let x = 0; x < W; x++) {
+          const u = x / (W - 1);
+          // 沿长度的明暗：尾巴淡出，头上最后一小段收掉（那里另外盖一颗光点）
+          const along = Math.pow(u, 1.5) * Math.min(1, (1 - u) / 0.05) * (0.86 + 0.14 * grain(u));
+          // 尾巴末端碎掉；断口跟着上下位置错开一点，不会是齐刷刷的一刀
+          const crumbleAt = (v) => Math.min(1, Math.max(0, (crumble(Math.min(1, Math.max(0, u + v * 0.12))) - (0.42 - u) * 1.5) * 2.2));
+          const wide = (0.3 + 0.7 * Math.pow(u, 0.6)) * (0.8 + 0.4 * wobble(u));
+          for (let y = 0; y < H; y++) {
+            const v = (y + 0.5 - H / 2) / (H / 2);
+            const core = Math.exp(-Math.pow(v / ((0.035 + 0.1 * Math.pow(u, 1.4)) * (0.8 + 0.4 * wobble(u))), 2)) * along;
+            let halo = Math.exp(-Math.pow(Math.abs(v) / (0.36 * wide), 1.5)) * along * 0.42;
+            for (const wisp of wisps) {
+              // 细丝离头越远散得越开
+              const off = wisp.side * (0.25 + 0.75 * (1 - u));
+              const on = Math.min(1, Math.max(0, (wisp.gap(u) - wisp.cut) * 3.5));
+              halo += Math.exp(-Math.pow((v - off) / 0.05, 2)) * on * wisp.a * Math.pow(u, 0.9) * Math.min(1, (1 - u) / 0.12);
+            }
+            // 上下两条边压到零，贴图放大后不会露出一道直边
+            const alpha = Math.min(1, (core + halo) * crumbleAt(v)) * Math.min(1, (1 - Math.abs(v)) * 5);
+            const white = Math.min(1, core * 1.15);
+            const at = (y * W + x) * 4;
+            image.data[at] = 255 * (r + (1 - r) * white);
+            image.data[at + 1] = 255 * (gr + (1 - gr) * white);
+            image.data[at + 2] = 255 * (b + (1 - b) * white);
+            image.data[at + 3] = 255 * alpha;
+          }
+        }
+        g.putImageData(image, 0, 0);
+        trails[index] = sprite;
+      }
+      return trails[index];
+    };
+
     // 每一年是一个星系，长相跟着年份走：旋臂的颜色、旋臂上星云的颜色、旋臂拧得多紧（越小越紧）
     const LOOKS = [
       { arm: 218, knot: 345, slope: 0.31 },
@@ -1982,10 +2048,11 @@
       const cy = h * 0.42 + Math.cos(now / 1500) * w * 0.025 * surge;
       const swirl = 0.5 * surge;
 
+      const shakeX = rand(-1, 1) * surge * 1.6;
+      const shakeY = rand(-1, 1) * surge * 1.6;
       ctx.save();
-      ctx.translate(rand(-1, 1) * surge * 1.6, rand(-1, 1) * surge * 1.6);
+      ctx.translate(shakeX, shakeY);
       ctx.globalCompositeOperation = 'lighter';
-      ctx.lineCap = 'round';
 
       const halo = 110 + 210 * surge;
       ctx.globalAlpha = 0.18 + 0.5 * surge;
@@ -2029,23 +2096,43 @@
           s.z = 1;
           continue;
         }
-        const tail = Math.min(1.1, s.z + speed * s.k * 5 + 0.003);
-        const a = s.a + swirl * (1 - s.z);
-        const x = cx + ((Math.cos(a) * s.r) / s.z) * w * 0.5;
-        const y = cy + ((Math.sin(a) * s.r) / s.z) * w * 0.5;
-        if (x < -40 || x > w + 40 || y < -40 || y > h + 40) {
+        const tail = Math.min(1.15, s.z + speed * s.k * 8 + 0.003);
+        const b = s.a + swirl * (1 - tail);
+        const tx = cx + ((Math.cos(b) * s.r) / tail) * w * 0.5;
+        const ty = cy + ((Math.sin(b) * s.r) / tail) * w * 0.5;
+        // 尾巴也出了屏幕才算飞过去，不然头一出界整条光迹会突然消失
+        if (tx < -40 || tx > w + 40 || ty < -40 || ty > h + 40) {
           s.z = 1;
           continue;
         }
-        const b = s.a + swirl * (1 - tail);
-        ctx.globalAlpha = Math.min(1, (1 - s.z) * 1.7);
-        ctx.strokeStyle = s.color;
-        ctx.lineWidth = 0.4 + (1 - s.z) * 2.1;
-        ctx.beginPath();
-        ctx.moveTo(cx + ((Math.cos(b) * s.r) / tail) * w * 0.5, cy + ((Math.sin(b) * s.r) / tail) * w * 0.5);
-        ctx.lineTo(x, y);
-        ctx.stroke();
+        const a = s.a + swirl * (1 - s.z);
+        const dx = cx + ((Math.cos(a) * s.r) / s.z) * w * 0.5 - tx;
+        const dy = cy + ((Math.sin(a) * s.r) / s.z) * w * 0.5 - ty;
+        const len = Math.hypot(dx, dy) || 0.001;
+        const near = 1 - s.z;
+        const half = (2.2 + near * 10) * s.size;
+        const alpha = Math.min(1, near * 1.7) * s.lum * (0.82 + 0.18 * Math.sin(now * s.blink + s.a * 40));
+        // 还在隧道尽头、暗得看不见的就不画了
+        if (alpha < 0.04) continue;
+        // 头朝飞的方向：把坐标系挪到头上、转过去，贴图往身后铺
+        const ux = (dx / len) * dpr;
+        const uy = (dy / len) * dpr;
+        ctx.setTransform(ux, uy, -uy, ux, (tx + dx + shakeX) * dpr, (ty + dy + shakeY) * dpr);
+        if (len > 1.5) {
+          ctx.globalAlpha = alpha * Math.min(1, len / half);
+          ctx.drawImage(trail(s.look), -len, -half, len, half * 2);
+        }
+        if (s.size > 1.5 && len > 1.5) {
+          // 离得近的大星再罩一层更宽更淡的光
+          ctx.globalAlpha = alpha * 0.3 * Math.min(1, len / half);
+          ctx.drawImage(trail(s.look), -len * 0.8, -half * 2.4, len * 0.8, half * 4.8);
+        }
+        // 星星本身：一颗白热的光点顶在最前面
+        const bead = half * (0.5 + 0.22 * Math.min(1, len / 60));
+        ctx.globalAlpha = alpha;
+        ctx.drawImage(glowSprite(TRAIL_HUES[s.look % TRAIL_HUES.length]), -bead, -bead, bead * 2, bead * 2);
       }
+      ctx.setTransform(dpr, 0, 0, dpr, shakeX * dpr, shakeY * dpr);
 
       // 读数的头尾各留一小段不动，看得清从哪年出发、到了哪年
       const q = Math.min(1, Math.max(0, (p - 0.2) / 0.66));
@@ -2411,12 +2498,18 @@
       // 今年的相册不用往回飞，飞一小段就到
       warpMs = entry.from > entry.to ? WARP_MS : 3000;
       canopy.clear();
-      streaks = Array.from({ length: 380 }, () => ({
+      // 光迹贴图趁现在画好，别等飞起来的第一帧再算
+      for (let i = 0; i < TRAIL_HUES.length * 2; i++) trail(i);
+      streaks = Array.from({ length: 330 }, () => ({
         a: rand(0, Math.PI * 2),
         r: rand(0.08, 1.2),
         z: rand(0.05, 1),
         k: rand(0.6, 1.4),
-        color: `hsl(${Math.round(rand(195, 290))}, 100%, ${Math.round(rand(74, 92))}%)`
+        // 贴图每个色相备两张，毛边各不一样；十颗里有一颗又大又亮
+        look: Math.floor(rand(0, TRAIL_HUES.length * 2)),
+        size: Math.random() < 0.1 ? rand(1.6, 2.4) : rand(0.55, 1.15),
+        lum: rand(0.6, 1),
+        blink: rand(0.004, 0.012)
       }));
 
       const now = performance.now();
