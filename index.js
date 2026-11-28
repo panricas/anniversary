@@ -1174,7 +1174,7 @@
   };
 
   // 星空相册：从时间线的某一年进入。先坐飞船穿过时光隧道倒回那一年，
-  // 到了以后人在星空里面，这一年的照片是一颗颗会闪的星星，拖动环顾四周，轻点查看
+  // 到了以后人悬在这一年的星系上方斜着往下看，照片是浮在星系盘上的一颗颗亮星，拖动绕着星系转，轻点查看
   const cosmos = (() => {
     const root = $('cosmos');
     const canvas = $('cosmosCanvas');
@@ -1185,12 +1185,15 @@
     const WARP_MS = 5400;
     const RAD = Math.PI / 180;
     const VIDEO = /\.(mp4|mov|m4v|webm)(\?.*)?$/i;
-    const LABEL = '12px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif';
-    const cam = { yaw: 0, pitch: 0, vyaw: 0, vpitch: 0, target: null };
+    const LABEL = '11px -apple-system, "PingFang SC", "Helvetica Neue", sans-serif';
+    // 镜头绕着这一年的星系转：yaw 是绕到哪一边，pitch 是俯视的角度，都是弧度
+    const REST = { pitch: 0.62, dist: 1.12 };
+    const cam = { yaw: 0, pitch: REST.pitch, vyaw: 0, vpitch: 0, target: null };
     let w = 0;
     let h = 0;
+    let dpr = 1;
     let focal = 0;
-    let zoom = 1;
+    let eyeline = 0;
     let mode = 'off'; // off | warp | sky
     let looping = false;
     let last = 0;
@@ -1201,23 +1204,14 @@
     let streaks = [];
     let rings = [];
     let ringClock = 0;
+    let clouds = [];
     let flybys = [];
     let passed = 0;
     let spin = 0;
+    let turn = 0;
     let warpMs = WARP_MS;
     let meteors = [];
     let nextMeteor = 0;
-    let cosYaw = 1;
-    let sinYaw = 0;
-    let cosPitch = 1;
-    let sinPitch = 0;
-
-    // 视线方向 → 单位向量。yaw 是左右转，pitch 是抬头低头，都为 0 时看向 +z
-    const unit = (yaw, pitch) => ({
-      x: Math.sin(yaw) * Math.cos(pitch),
-      y: Math.sin(pitch),
-      z: Math.cos(yaw) * Math.cos(pitch)
-    });
 
     // 由序号算出的固定「随机数」，同一颗星每次进来都在同一个位置
     const noise = (i, k) => {
@@ -1225,65 +1219,468 @@
       return s - Math.floor(s);
     };
 
-    // 背景星：六成均匀撒在天球上，四成挤在一条斜带上当银河
-    const backdrop = Array.from({ length: 1100 }, (_, i) => {
-      let d;
-      if (i % 5 < 2) {
-        const p = unit(rand(0, Math.PI * 2), (rand(-1, 1) + rand(-1, 1)) * 0.11);
-        d = { x: p.x * 0.825 - p.y * 0.565, y: p.x * 0.565 + p.y * 0.825, z: p.z };
-      } else {
-        d = unit(rand(0, Math.PI * 2), Math.asin(rand(-1, 1)));
+    // 由种子生出的一串固定随机数：同一年的星系每次进来都长一个样
+    const seeded = (seed) => () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+
+    // 色相、饱和度、亮度 → 0–1 的红绿蓝
+    const tint = (hue, s, l) => {
+      const a = s * Math.min(l, 1 - l);
+      const part = (n) => {
+        const k = (n + hue / 30 + 12) % 12;
+        return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+      };
+      return [part(0), part(8), part(4)];
+    };
+
+    // 一团没有硬边的雾，星系的底图就是拿它一团团叠出来的；hue 传 -1 是黑的，用来压出尘埃带
+    const puffs = {};
+    const puff = (hue, s, l) => {
+      const key = `${hue},${s},${l}`;
+      if (!puffs[key]) {
+        const sprite = document.createElement('canvas');
+        sprite.width = sprite.height = 64;
+        const g = sprite.getContext('2d');
+        const color = hue < 0 ? '0, 0, 0' : tint(hue, s, l).map((v) => Math.round(v * 255)).join(', ');
+        const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+        [[0, 1], [0.25, 0.6], [0.55, 0.18], [1, 0]].forEach(([at, a]) => grad.addColorStop(at, `rgba(${color}, ${a})`));
+        g.fillStyle = grad;
+        g.fillRect(0, 0, 64, 64);
+        puffs[key] = sprite;
       }
-      return Object.assign(d, {
-        size: rand(0.5, 1.7),
-        phase: rand(0, Math.PI * 2),
-        rate: rand(500, 1600),
-        color: pick(['#ffffff', '#ffffff', '#cfe0ff', '#ffe6c8']),
-        bright: Math.random() < 0.07
+      return puffs[key];
+    };
+
+    // 每一年是一个星系，长相跟着年份走：旋臂的颜色、旋臂上星云的颜色、旋臂拧得多紧（越小越紧）
+    const LOOKS = [
+      { arm: 218, knot: 345, slope: 0.31 },
+      { arm: 196, knot: 18, slope: 0.36 },
+      { arm: 250, knot: 330, slope: 0.27 },
+      { arm: 176, knot: 40, slope: 0.33 },
+      { arm: 232, knot: 352, slope: 0.4 },
+      { arm: 272, knot: 28, slope: 0.29 }
+    ];
+    const ARMS = 2;
+    // 旋臂是对数螺线：这是它在半径 r 处拧过去的角度
+    const wind = (look, r) => Math.log(Math.max(r, 0.03) / 0.1) / look.slope;
+
+    // 星系里的每一颗星：位置 3 个数、颜色 3 个数、大小、一个随机数，一共 8 个数一颗
+    const STRIDE = 8;
+    const scatter = (index) => {
+      const look = LOOKS[index % LOOKS.length];
+      const random = seeded(index * 977 + 11);
+      const bell = () => (random() + random() + random() + random() - 2) * 1.73;
+      const list = [];
+      const put = (x, y, z, color, bright, size) => {
+        list.push(x, y, z, color[0] * bright, color[1] * bright, color[2] * bright, size, random());
+      };
+      const arm = (k, r) => (k / ARMS) * Math.PI * 2 + wind(look, r);
+
+      // 核球：中间一团偏黄的老星
+      for (let i = 0; i < 2400; i++) {
+        const r = 0.03 + 0.085 * random();
+        put(bell() * r, bell() * r * 0.55, bell() * r, tint(30 + random() * 20, 0.75, 0.74), 0.08 + random() * 0.18, 1 + random() * 0.8);
+      }
+      // 盘：一多半的星挤在两条旋臂上，其余铺满整个盘。越往外越蓝，零星几颗特别亮的
+      for (let i = 0; i < 27000; i++) {
+        const r = Math.min(1.3, 0.05 - 0.23 * Math.log(random() * random() + 0.0001));
+        const onArm = random() < 0.6;
+        const a = onArm ? arm(Math.floor(random() * ARMS), r) + (bell() * 0.07) / r : random() * Math.PI * 2;
+        const giant = random() < 0.012;
+        const color = random() < 1 - r / 0.36 ? tint(32 + random() * 18, 0.8, 0.76)
+          : !onArm ? tint(40, 0.32, 0.84)
+            : random() < 0.035 ? tint(look.knot, 0.85, 0.66)
+              : tint(look.arm + bell() * 14, 0.7, 0.76 + random() * 0.14);
+        put(
+          Math.cos(a) * r, bell() * (random() < 0.08 ? 0.05 : 0.013) * (1.2 - r * 0.5), Math.sin(a) * r, color,
+          // 越靠中心星越密，单颗压暗一些，免得叠成一片白
+          (giant ? 1 : onArm ? 0.26 + random() * 0.5 : 0.14 + random() * 0.3) * Math.min(1, 0.22 + r * 2.4),
+          giant ? 2.4 + random() * 1.4 : 0.9 + random() * 0.9
+        );
+      }
+      // 旋臂上的年轻星团：一小撮一小撮挤在一起的蓝白亮星
+      for (let i = 0; i < 70; i++) {
+        const r = 0.2 + 0.95 * random();
+        const a = arm(i % ARMS, r) + (bell() * 0.045) / r;
+        const tight = 0.008 + 0.014 * random();
+        for (let k = 0; k < 26; k++) {
+          put(
+            Math.cos(a) * r + bell() * tight, bell() * tight * 0.6, Math.sin(a) * r + bell() * tight,
+            tint(look.arm - 8 + bell() * 10, 0.6, 0.84), 0.35 + random() * 0.5, 1 + random() * 1.1
+          );
+        }
+      }
+      // 晕：稀稀拉拉裹在外面的星
+      for (let i = 0; i < 900; i++) {
+        const yaw = random() * Math.PI * 2;
+        const lift = Math.asin(random() * 2 - 1);
+        const r = 0.25 + 1.4 * Math.pow(random(), 1.6);
+        put(
+          Math.cos(yaw) * Math.cos(lift) * r, Math.sin(lift) * r * 0.7, Math.sin(yaw) * Math.cos(lift) * r,
+          tint(30 + random() * 190, 0.4, 0.84), 0.14 + random() * 0.3, 0.9 + random() * 0.8
+        );
+      }
+      return { look, seed: index * 131 + 7, points: new Float32Array(list) };
+    };
+
+    // 星系的底图：从正上方看下去的一层光，画在一张小画布上，再由 WebGL 按透视铺到星系盘上。
+    // 星是一颗颗的点，星和星之间那层朦胧的光、旋臂里侧的暗带靠它
+    const REACH = 1.45;
+    const SHEET = 512;
+    const sheet = document.createElement('canvas');
+    sheet.width = sheet.height = SHEET;
+    const paint = (model) => {
+      const look = model.look;
+      const random = seeded(model.seed);
+      const bell = () => (random() + random() + random() + random() - 2) * 1.73;
+      const g = sheet.getContext('2d');
+      const half = SHEET / 2;
+      const scale = half / REACH;
+      const blob = (sprite, x, z, r, alpha) => {
+        g.globalAlpha = alpha;
+        g.drawImage(sprite, half + (x - r) * scale, half + (z - r) * scale, r * 2 * scale, r * 2 * scale);
+      };
+      // 第 k 条旋臂上半径 r 处的一个点；side 是往旋臂里侧（负）或外侧（正）偏多少
+      const along = (k, r, side) => {
+        const a = (k / ARMS) * Math.PI * 2 + wind(look, r);
+        return [Math.cos(a) * (r + side), Math.sin(a) * (r + side)];
+      };
+
+      g.globalCompositeOperation = 'source-over';
+      g.globalAlpha = 1;
+      g.fillStyle = '#000';
+      g.fillRect(0, 0, SHEET, SHEET);
+      g.globalCompositeOperation = 'lighter';
+
+      // 整个盘的底光：外圈偏旋臂的颜色，往里越来越暖
+      blob(puff(look.arm, 0.55, 0.42), 0, 0, 1.42, 0.5);
+      blob(puff(look.arm, 0.5, 0.5), 0, 0, 0.95, 0.24);
+      blob(puff(38, 0.6, 0.5), 0, 0, 0.6, 0.2);
+      // 旋臂：一团团雾沿着螺线叠出来，靠里偏暖，往外偏蓝，越往外越淡
+      for (let k = 0; k < ARMS; k++) {
+        for (let i = 0; i < 900; i++) {
+          const r = 0.08 + 1.2 * Math.pow(random(), 1.15);
+          const [x, z] = along(k, r, bell() * 0.06);
+          const sprite = random() < 1 - r / 0.4 ? puff(38, 0.65, 0.6) : puff(look.arm, 0.7, random() < 0.5 ? 0.52 : 0.66);
+          // 靠中心的地方雾团挤在一起，单团要淡，不然中间糊成一片白
+          blob(sprite, x, z, 0.045 + 0.085 * random(), 0.1 * Math.max(0.15, 1.15 - r) * Math.min(1, 0.2 + r * 2.6));
+        }
+      }
+      // 尘埃带：贴着旋臂里侧压暗，再在盘上随手压几下，底光就不那么匀
+      g.globalCompositeOperation = 'source-over';
+      const shade = puff(-1, 0, 0);
+      for (let k = 0; k < ARMS; k++) {
+        for (let i = 0; i < 520; i++) {
+          const r = 0.2 + 0.9 * random();
+          const [x, z] = along(k, r, -0.075 - 0.02 * r + bell() * 0.028);
+          blob(shade, x, z, 0.02 + 0.04 * random(), 0.16);
+        }
+      }
+      for (let i = 0; i < 260; i++) {
+        const r = 0.22 + Math.sqrt(random());
+        const a = random() * Math.PI * 2;
+        blob(shade, Math.cos(a) * r, Math.sin(a) * r, 0.02 + 0.06 * random(), 0.14);
+      }
+      g.globalCompositeOperation = 'lighter';
+      // 旋臂上零星几团发红的星云
+      for (let i = 0; i < 34; i++) {
+        const r = 0.2 + 0.9 * random();
+        const [x, z] = along(i % ARMS, r, bell() * 0.035);
+        blob(puff(look.knot, 0.8, 0.54), x, z, 0.014 + 0.026 * random(), 0.42);
+      }
+      // 核：中间暖色的一团，亮但不能亮成一片白，那样星星就看不见了
+      blob(puff(40, 0.8, 0.6), 0, 0, 0.26, 0.34);
+      g.globalAlpha = 1;
+    };
+
+    // 背景：无穷远处的星、几片很淡的星云、飘在镜头附近的星尘。
+    // 镜头一直是俯视的，头顶那半边天永远看不到，所以星只撒在地平线附近和以下
+    const backdrop = (() => {
+      const list = [];
+      for (let i = 0; i < 3600; i++) {
+        const yaw = rand(0, Math.PI * 2);
+        const lift = Math.asin(rand(-1, 0.45));
+        const color = tint(pick([220, 220, 215, 40, 28, 200]), 0.5, 0.86);
+        // 亮的少、暗的多
+        const bright = 0.2 + 0.8 * Math.pow(Math.random(), 4);
+        list.push(Math.cos(yaw) * Math.cos(lift), Math.sin(lift), Math.sin(yaw) * Math.cos(lift), color[0] * bright, color[1] * bright, color[2] * bright, bright > 0.6 ? rand(1.8, 3) : rand(0.9, 1.6), Math.random());
+      }
+      return new Float32Array(list);
+    })();
+    // 星云：每一片是十来个又大又淡的光斑叠在一起，叠出来的形状不规则。[左右角度, 上下角度, 色相]
+    const haze = (() => {
+      const list = [];
+      [[25, 2, 262], [100, -6, 205], [165, 6, 318], [-130, -2, 228], [-55, 8, 238], [-90, -40, 250], [60, -48, 215]].forEach(([yaw, lift, hue]) => {
+        for (let i = 0; i < 10; i++) {
+          const a = (yaw + rand(-17, 17)) * RAD;
+          const b = (lift + rand(-9, 9)) * RAD;
+          const color = tint(hue + rand(-22, 22), 0.75, 0.55);
+          const bright = rand(0.035, 0.075);
+          list.push(Math.cos(a) * Math.cos(b), Math.sin(b), Math.sin(a) * Math.cos(b), color[0] * bright, color[1] * bright, color[2] * bright, rand(90, 210), Math.random());
+        }
       });
-    });
+      return new Float32Array(list);
+    })();
+    const motes = (() => {
+      const list = [];
+      for (let i = 0; i < 170; i++) {
+        const yaw = rand(0, Math.PI * 2);
+        const r = rand(0.35, 1.7);
+        const color = tint(pick([215, 230, 40]), 0.5, 0.8);
+        const bright = rand(0.05, 0.16);
+        list.push(Math.cos(yaw) * r, rand(0.12, 1.2), Math.sin(yaw) * r, color[0] * bright, color[1] * bright, color[2] * bright, rand(1.4, 3), Math.random());
+      }
+      return new Float32Array(list);
+    })();
 
-    // 星云：[左右角度, 上下角度, 色相, 大小]
-    const nebulae = [
-      [18, 14, 265, 0.95], [-38, -12, 215, 0.8], [72, 22, 320, 0.7],
-      [150, -12, 190, 0.85], [-112, 18, 25, 0.6], [-162, -24, 280, 0.75]
-    ].map(([yaw, pitch, hue, size]) => {
-      const sprite = document.createElement('canvas');
-      sprite.width = sprite.height = 256;
-      const g = sprite.getContext('2d');
-      const grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
-      grad.addColorStop(0, `hsla(${hue}, 80%, 58%, 0.5)`);
-      grad.addColorStop(0.45, `hsla(${hue + 20}, 80%, 48%, 0.2)`);
-      grad.addColorStop(1, `hsla(${hue + 40}, 80%, 40%, 0)`);
-      g.fillStyle = grad;
-      g.fillRect(0, 0, 256, 256);
-      return Object.assign(unit(yaw * RAD, pitch * RAD), { sprite, size });
-    });
+    // 很远很远的别的星系：天球上几个淡淡的小光斑。[左右角度, 上下角度, 长, 扁, 歪, 色相]
+    const far = [
+      [20, -8, 15, 0.35, 0.5, 215], [-48, 4, 9, 0.6, -0.8, 40], [95, -14, 11, 0.3, 1.2, 280],
+      [150, 2, 8, 0.7, 0.2, 200], [-120, -10, 13, 0.4, -0.3, 30], [-165, -4, 7, 0.5, 0.9, 220],
+      [60, 9, 10, 0.45, 0.4, 250], [-80, 12, 12, 0.3, -1, 210], [175, -16, 8, 0.6, 0.7, 35],
+      [-15, 14, 9, 0.5, 0.3, 225], [120, 16, 11, 0.4, -0.6, 35]
+    ].map(([yaw, lift, size, flat, tilt, hue]) => ({
+      x: Math.cos(yaw * RAD) * Math.cos(lift * RAD), y: Math.sin(lift * RAD), z: Math.sin(yaw * RAD) * Math.cos(lift * RAD),
+      size, flat, tilt, hue
+    }));
 
-    // 把天球上的方向投到屏幕上；结果写进同一个对象，z <= 0.08 表示在身后，不画
+    // 这一帧镜头在哪、朝哪：e 是位置，r / u / f 是右、上、前三个方向。星系那层和照片星这层共用
+    const lens = { ex: 0, ey: 1, ez: 1, rx: 1, rz: 0, ux: 0, uy: 1, uz: 0, fx: 0, fy: 0, fz: -1 };
+    const aim = (yaw, pitch, dist) => {
+      lens.ex = Math.sin(yaw) * Math.cos(pitch) * dist;
+      lens.ey = Math.sin(pitch) * dist;
+      lens.ez = Math.cos(yaw) * Math.cos(pitch) * dist;
+      // 一直盯着星系中心
+      lens.fx = -lens.ex / dist;
+      lens.fy = -lens.ey / dist;
+      lens.fz = -lens.ez / dist;
+      const flat = Math.hypot(lens.fx, lens.fz) || 1;
+      lens.rx = lens.fz / flat;
+      lens.rz = -lens.fx / flat;
+      lens.ux = lens.fy * lens.rz;
+      lens.uy = lens.fz * lens.rx - lens.fx * lens.rz;
+      lens.uz = -lens.fy * lens.rx;
+    };
+
+    // 把空间里的一个点投到屏幕上；结果写进同一个对象，z 是离镜头多远，太近或在身后就不画
     const spot = { x: 0, y: 0, z: 0 };
-    const project = (d) => {
-      const x = d.x * cosYaw - d.z * sinYaw;
-      const depth = d.x * sinYaw + d.z * cosYaw;
-      const y = d.y * cosPitch - depth * sinPitch;
-      spot.z = d.y * sinPitch + depth * cosPitch;
-      if (spot.z > 0.08) {
-        const k = (focal * zoom) / spot.z;
-        spot.x = w / 2 + x * k;
-        spot.y = h / 2 - y * k;
+    const cast = (dx, dy, dz) => {
+      spot.z = dx * lens.fx + dy * lens.fy + dz * lens.fz;
+      if (spot.z > 0.05) {
+        const k = focal / spot.z;
+        spot.x = w / 2 + (dx * lens.rx + dz * lens.rz) * k;
+        spot.y = eyeline - (dx * lens.ux + dy * lens.uy + dz * lens.uz) * k;
       }
       return spot;
     };
+    const project = (x, y, z) => cast(x - lens.ex, y - lens.ey, z - lens.ez);
+
+    // 星系本体用 WebGL 画：一万多颗星要一颗颗按透视摆，2D 画布吃不消。
+    // 拿不到 WebGL 的浏览器这里是 null，drawSky 里改用 2D 画布画一个稀疏的版本
+    const deep = (() => {
+      const view = $('cosmosDeep');
+      let gl = null;
+      try {
+        gl = view.getContext('webgl', { alpha: false, antialias: false, depth: false });
+      } catch (err) {}
+      if (!gl) return null;
+
+      const LENS = `
+        uniform vec3 uEye;
+        uniform vec3 uRight;
+        uniform vec3 uUp;
+        uniform vec3 uFwd;
+        uniform vec3 uLens;
+        vec4 place(vec3 d) {
+          float z = dot(d, uFwd);
+          return vec4(dot(d, uRight) * uLens.x, dot(d, uUp) * uLens.y + uLens.z * z, z * 0.998 - 0.01, z);
+        }`;
+      const link = (vertex, fragment, names) => {
+        const program = gl.createProgram();
+        [[gl.VERTEX_SHADER, vertex], [gl.FRAGMENT_SHADER, fragment]].forEach(([type, source]) => {
+          const shader = gl.createShader(type);
+          gl.shaderSource(shader, source);
+          gl.compileShader(shader);
+          gl.attachShader(program, shader);
+        });
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return null;
+        const at = {};
+        names.forEach((name) => {
+          at[name] = name[0] === 'a' ? gl.getAttribLocation(program, name) : gl.getUniformLocation(program, name);
+        });
+        return { program, at };
+      };
+
+      // 星星：uGrow 是离得近时放大得多快，星系里的星只放大一点（星星再近也是个点），星尘凑到眼前会虚成一片
+      const stars = link(`
+        attribute vec3 aPos;
+        attribute vec3 aColor;
+        attribute vec2 aSize;
+        ${LENS}
+        uniform vec2 uSpin;
+        uniform float uFar;
+        uniform float uGrow;
+        uniform float uDpr;
+        uniform float uMax;
+        uniform float uSoft;
+        uniform float uTime;
+        uniform float uFade;
+        varying vec3 vColor;
+        void main() {
+          vec3 p = vec3(aPos.x * uSpin.x - aPos.z * uSpin.y, aPos.y, aPos.x * uSpin.y + aPos.z * uSpin.x);
+          gl_Position = place(p - uEye * (1.0 - uFar));
+          float near = 1.0 / max(mix(gl_Position.w, 1.0, uFar), 0.05);
+          float size = aSize.x * uDpr * pow(near, uGrow);
+          float shown = clamp(size, 1.5, uMax);
+          // 小到不足一个像素的星不再缩小，改成变暗；凑到眼前的星尘摊得越大越淡
+          float glow = min(1.0, (size * size) / (shown * shown)) / (1.0 + max(0.0, size - 6.0 * uDpr) * uSoft);
+          float twinkle = 0.78 + 0.22 * sin(uTime * (0.5 + aSize.y * 2.6) + aSize.y * 50.0);
+          gl_PointSize = shown;
+          vColor = aColor * (glow * twinkle * uFade);
+        }`, `
+        precision mediump float;
+        varying vec3 vColor;
+        void main() {
+          vec2 c = gl_PointCoord - 0.5;
+          float soft = max(0.0, 1.0 - dot(c, c) * 4.0);
+          gl_FragColor = vec4(vColor * soft * soft * soft * soft, 1.0);
+        }`, ['aPos', 'aColor', 'aSize', 'uEye', 'uRight', 'uUp', 'uFwd', 'uLens', 'uSpin', 'uFar', 'uGrow', 'uDpr', 'uMax', 'uSoft', 'uTime', 'uFade']);
+
+      const disc = link(`
+        attribute vec2 aCorner;
+        ${LENS}
+        uniform vec2 uSpin;
+        varying vec2 vUv;
+        void main() {
+          vec2 q = aCorner * ${REACH.toFixed(2)};
+          gl_Position = place(vec3(q.x * uSpin.x - q.y * uSpin.y, 0.0, q.x * uSpin.y + q.y * uSpin.x) - uEye);
+          vUv = aCorner * 0.5 + 0.5;
+        }`, `
+        precision mediump float;
+        uniform sampler2D uSheet;
+        uniform float uFade;
+        varying vec2 vUv;
+        void main() {
+          gl_FragColor = vec4(texture2D(uSheet, vUv).rgb * uFade, 1.0);
+        }`, ['aCorner', 'uEye', 'uRight', 'uUp', 'uFwd', 'uLens', 'uSpin', 'uSheet', 'uFade']);
+      if (!stars || !disc) return null;
+
+      const buffer = (data) => {
+        const b = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, b);
+        gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+        return b;
+      };
+      const corners = buffer(new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]));
+      const sky = buffer(backdrop);
+      const mist = buffer(haze);
+      const dust = buffer(motes);
+      const galaxy = gl.createBuffer();
+      let count = 0;
+      const texture = gl.createTexture();
+      const widest = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1];
+      let lost = false;
+      view.addEventListener('webglcontextlost', (e) => {
+        e.preventDefault();
+        lost = true;
+      });
+
+      const look = (at) => {
+        gl.uniform3f(at.uEye, lens.ex, lens.ey, lens.ez);
+        gl.uniform3f(at.uRight, lens.rx, 0, lens.rz);
+        gl.uniform3f(at.uUp, lens.ux, lens.uy, lens.uz);
+        gl.uniform3f(at.uFwd, lens.fx, lens.fy, lens.fz);
+        gl.uniform3f(at.uLens, focal / (w / 2), focal / (h / 2), (h / 2 - eyeline) / (h / 2));
+      };
+      const points = (source, total, spinCos, spinSin, isFar, grow, cap, soft) => {
+        const at = stars.at;
+        gl.bindBuffer(gl.ARRAY_BUFFER, source);
+        gl.vertexAttribPointer(at.aPos, 3, gl.FLOAT, false, STRIDE * 4, 0);
+        gl.vertexAttribPointer(at.aColor, 3, gl.FLOAT, false, STRIDE * 4, 12);
+        gl.vertexAttribPointer(at.aSize, 2, gl.FLOAT, false, STRIDE * 4, 24);
+        gl.uniform2f(at.uSpin, spinCos, spinSin);
+        gl.uniform1f(at.uFar, isFar);
+        gl.uniform1f(at.uGrow, grow);
+        gl.uniform1f(at.uMax, Math.min(widest, cap * dpr));
+        gl.uniform1f(at.uSoft, soft);
+        gl.drawArrays(gl.POINTS, 0, total);
+      };
+
+      return {
+        get lost() { return lost; },
+        resize() {
+          view.width = w * dpr;
+          view.height = h * dpr;
+        },
+        // 换一个星系：把这一年的星和底图送进显卡
+        load(model) {
+          if (lost) return;
+          gl.bindBuffer(gl.ARRAY_BUFFER, galaxy);
+          gl.bufferData(gl.ARRAY_BUFFER, model.points, gl.STATIC_DRAW);
+          count = model.points.length / STRIDE;
+          paint(model);
+          gl.bindTexture(gl.TEXTURE_2D, texture);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, sheet);
+          gl.generateMipmap(gl.TEXTURE_2D);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        },
+        draw(now, fade) {
+          if (lost) return;
+          const c = Math.cos(turn);
+          const s = Math.sin(turn);
+          gl.viewport(0, 0, view.width, view.height);
+          gl.clearColor(0.004, 0.006, 0.018, 1);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.ONE, gl.ONE);
+
+          gl.useProgram(disc.program);
+          look(disc.at);
+          gl.bindBuffer(gl.ARRAY_BUFFER, corners);
+          gl.enableVertexAttribArray(disc.at.aCorner);
+          gl.vertexAttribPointer(disc.at.aCorner, 2, gl.FLOAT, false, 0, 0);
+          gl.uniform2f(disc.at.uSpin, c, s);
+          gl.uniform1f(disc.at.uFade, fade);
+          gl.uniform1i(disc.at.uSheet, 0);
+          gl.bindTexture(gl.TEXTURE_2D, texture);
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+          gl.useProgram(stars.program);
+          look(stars.at);
+          gl.enableVertexAttribArray(stars.at.aPos);
+          gl.enableVertexAttribArray(stars.at.aColor);
+          gl.enableVertexAttribArray(stars.at.aSize);
+          gl.uniform1f(stars.at.uDpr, dpr);
+          // 星云不闪：时间给 0，每个光斑的明暗就定住了
+          gl.uniform1f(stars.at.uTime, 0);
+          gl.uniform1f(stars.at.uFade, fade);
+          points(mist, haze.length / STRIDE, 1, 0, 1, 0, 240, 0);
+          gl.uniform1f(stars.at.uTime, (now % 600000) / 1000);
+          points(sky, backdrop.length / STRIDE, 1, 0, 1, 0, 8, 0);
+          points(galaxy, count, c, s, 0, 0.55, 14, 0);
+          points(dust, motes.length / STRIDE, 1, 0, 0, 1, 44, 0.12);
+        }
+      };
+    })();
 
     const resize = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
       w = app.clientWidth;
       h = app.clientHeight;
-      // 横向大约能看到 60° 的天空
+      // 横向大约能看到 60° 的范围；视线正对的那一点放在屏幕中间偏上
       focal = w * 0.866;
+      eyeline = h * 0.46;
       canvas.width = w * dpr;
       canvas.height = h * dpr;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      if (deep) deep.resize();
     };
 
     // 星星里的圆形小照片
@@ -1303,25 +1700,31 @@
     const build = (item) => {
       if (item.cosmos) return item.cosmos;
       const list = albumOf(item);
-      const gap = Math.min(15, 330 / list.length) * RAD;
+      const order = Math.max(0, (data.timeline || []).indexOf(item));
+      // 照片星悬在星系盘上方一点，从核心往外沿一条螺线排开，连起来是这一年走过的路
+      const gap = Math.max(28, Math.min(80, 540 / list.length)) * RAD;
       const nodes = list.map((photo, i) => {
-        // 沿水平方向一左一右、一高一低地排开，连起来是一条折线星座
-        const yaw = (i - (list.length - 1) / 2) * gap + (noise(i, 1) - 0.5) * 5 * RAD;
-        const pitch = (i % 2 ? 1 : -1) * (8 + noise(i, 2) * 20) * RAD + 3 * RAD;
         const video = photo.type === 'video' || VIDEO.test(photo.src || '');
-        const node = Object.assign(unit(yaw, pitch), {
-          yaw, pitch, photo, video,
+        const node = {
+          photo, video,
+          angle: order * 1.9 + i * gap + (noise(i, 1) - 0.5) * 0.2,
+          reach: 0.17 + 0.34 * Math.pow(list.length > 1 ? i / (list.length - 1) : 0.4, 0.8),
+          lift: 0.05 + noise(i, 2) * 0.05,
           thumb: null,
           ratio: 0,
-          radius: 15 + noise(i, 4) * 4,
           missing: !photo.src,
           seen: false,
           phase: noise(i, 3) * Math.PI * 2,
+          // 以下每帧重算：此刻在空间里的位置、落在屏幕的哪里、离镜头多远
+          x: 0,
+          y: 0,
+          z: 0,
           sx: 0,
           sy: 0,
+          depth: 1,
           front: false,
           grow: 0
-        });
+        };
         const cover = video ? photo.poster : photo.src;
         if (cover) {
           const img = new Image();
@@ -1340,14 +1743,14 @@
       const m = /^(\d{4})(?:\D+(\d{1,2}))?/.exec(item.date || '');
       const from = now.getFullYear() * 12 + now.getMonth();
       const to = m ? m[1] * 12 + (m[2] ? m[2] - 1 : 0) : from;
-      item.cosmos = { nodes, gap, to, from: Math.max(from, to), monthly: !!(m && m[2]) };
+      item.cosmos = { nodes, model: scatter(order), to, from: Math.max(from, to), monthly: !!(m && m[2]) };
       return item.cosmos;
     };
 
     const updateTip = () => {
       const total = entry.nodes.length;
       const seen = entry.nodes.filter((n) => n.seen).length;
-      $('cosmosTip').textContent = !seen ? '拖动环顾四周 · 轻点一颗星'
+      $('cosmosTip').textContent = !seen ? '拖动环绕星系 · 轻点一颗亮星'
         : seen < total ? `已点亮 ${seen} / ${total} 颗`
           : '这一年的星星都亮了';
     };
@@ -1458,6 +1861,19 @@
       ctx.globalAlpha = 0.18 + 0.5 * surge;
       ctx.drawImage(glowSprite(228), cx - halo, cy - halo, halo * 2, halo * 2);
 
+      // 迎面扑来的一团团星云，贴着舷窗擦过去：光有线条只是在看隧道，有它才像是自己在往里冲
+      if (clouds.length < 12 && Math.random() < 0.07 * surge * step) {
+        clouds.push({ a: rand(0, Math.PI * 2), r: rand(0.25, 0.95), z: 1, hue: pick([215, 250, 285, 320]) });
+      }
+      for (const c of clouds) {
+        c.z -= speed * 0.7 * step;
+        if (c.z <= 0.06) continue;
+        const size = (0.2 / c.z) * w;
+        ctx.globalAlpha = Math.min(1, (1 - c.z) * 3, (c.z - 0.06) * 6) * 0.22;
+        ctx.drawImage(puff(c.hue, 0.8, 0.6), cx + ((Math.cos(c.a) * c.r) / c.z) * w * 0.5 - size, cy + ((Math.sin(c.a) * c.r) / c.z) * w * 0.5 - size, size * 2, size * 2);
+      }
+      clouds = clouds.filter((c) => c.z > 0.06);
+
       // 一圈圈迎面扩大的光环，隧道感主要靠它
       ringClock += step * 16.67 * surge * 1.35;
       if (ringClock > 210) {
@@ -1546,57 +1962,106 @@
       }
     };
 
+    // 星系盘上（或盘上方）的一个点此刻落在屏幕的哪里。盘在慢慢自转，角度要加上转过的量
+    const orbit = (angle, reach, lift) => project(Math.cos(angle + turn) * reach, lift, Math.sin(angle + turn) * reach);
+
+    // 没有 WebGL 时的星系：只挑一小部分星，用小方块画在 2D 画布上
+    const sparse = (fade) => {
+      const model = entry.model;
+      if (!model.dots) {
+        const p = model.points;
+        model.dots = [];
+        for (let i = 0; i < p.length; i += STRIDE * 5) {
+          const peak = Math.max(p[i + 3], p[i + 4], p[i + 5], 0.01);
+          model.dots.push({
+            x: p[i], y: p[i + 1], z: p[i + 2],
+            alpha: Math.min(1, peak * 1.5),
+            color: `rgb(${[3, 4, 5].map((k) => Math.round((p[i + k] / peak) * 255)).join(', ')})`
+          });
+        }
+      }
+      ctx.fillStyle = '#dfe8ff';
+      for (let i = 0; i < backdrop.length; i += STRIDE * 3) {
+        const p = cast(backdrop[i], backdrop[i + 1], backdrop[i + 2]);
+        if (p.z <= 0.05 || p.x < 0 || p.x > w || p.y < 0 || p.y > h) continue;
+        ctx.globalAlpha = fade * Math.min(1, backdrop[i + 3] + 0.2);
+        ctx.fillRect(p.x, p.y, 1, 1);
+      }
+      // 盘面的底光：一团压扁的雾
+      const mid = project(0, 0, 0);
+      const glow = (focal * 0.95) / mid.z;
+      ctx.globalAlpha = 0.5 * fade;
+      ctx.drawImage(puff(model.look.arm, 0.6, 0.45), mid.x - glow, mid.y + glow * lens.fy, glow * 2, glow * -2 * lens.fy);
+      const c = Math.cos(turn);
+      const s = Math.sin(turn);
+      for (const d of model.dots) {
+        const p = project(d.x * c - d.z * s, d.y, d.x * s + d.z * c);
+        if (p.z <= 0.05 || p.x < 0 || p.x > w || p.y < 0 || p.y > h) continue;
+        const size = Math.min(2.4, 0.5 + 1 / p.z);
+        ctx.globalAlpha = fade * d.alpha;
+        ctx.fillStyle = d.color;
+        ctx.fillRect(p.x, p.y, size, size);
+      }
+    };
+
+    const DIVE_MS = 2800;
+
     const drawSky = (now, step) => {
       const nodes = entry.nodes;
       const age = now - began;
+      const calm = reduceMotion ? 0 : 1;
 
       if (cam.target) {
-        // 转向正在看的那颗星，yaw 走近的那一边
-        let turn = (cam.target.yaw - cam.yaw) % (Math.PI * 2);
-        if (turn > Math.PI) turn -= Math.PI * 2;
-        if (turn < -Math.PI) turn += Math.PI * 2;
-        cam.yaw += turn * Math.min(1, 0.07 * step);
-        cam.pitch += (cam.target.pitch - cam.pitch) * Math.min(1, 0.07 * step);
+        // 镜头绕到正在看的那颗星这一侧，走近的那一边
+        let swing = (Math.PI / 2 - cam.target.angle - turn - cam.yaw) % (Math.PI * 2);
+        if (swing > Math.PI) swing -= Math.PI * 2;
+        if (swing < -Math.PI) swing += Math.PI * 2;
+        cam.yaw += swing * Math.min(1, 0.05 * step);
       } else if (!drag) {
-        // 松手后带一点惯性
-        cam.yaw += cam.vyaw * step;
+        // 松手后带一点惯性；没人碰的时候镜头自己绕着星系慢慢飘
+        cam.yaw += (cam.vyaw - calm * 0.0005) * step;
         cam.pitch += cam.vpitch * step;
-        cam.vyaw *= Math.pow(0.88, step);
-        cam.vpitch *= Math.pow(0.88, step);
+        cam.vyaw *= Math.pow(0.9, step);
+        cam.vpitch *= Math.pow(0.9, step);
       }
-      cam.pitch = Math.max(-1, Math.min(1, cam.pitch));
-      // 视线一直有一点很慢的晃动，像人飘在太空里
-      const float = reduceMotion ? 0 : 1;
-      cosYaw = Math.cos(cam.yaw + float * 0.024 * Math.sin(now / 5200));
-      sinYaw = Math.sin(cam.yaw + float * 0.024 * Math.sin(now / 5200));
-      cosPitch = Math.cos(cam.pitch + float * 0.014 * Math.cos(now / 6700));
-      sinPitch = Math.sin(cam.pitch + float * 0.014 * Math.cos(now / 6700));
-      // 刚到的时候星星从中间向四周散开，像飞船在减速
-      zoom = reduceMotion ? 1 : 0.3 + 0.7 * (1 - Math.pow(1 - Math.min(1, age / 1600), 3));
+      cam.pitch = Math.max(0.3, Math.min(1.25, cam.pitch));
+      turn -= calm * 0.00022 * step;
+
+      // 刚出隧道时星系还在远处的正下方，镜头一边俯冲一边绕进去、把视线压平；之后一直有一点很慢的漂浮
+      const out = reduceMotion ? 0 : Math.pow(1 - Math.min(1, age / DIVE_MS), 3);
+      aim(
+        cam.yaw + out * 1.2 + calm * 0.02 * Math.sin(now / 5200),
+        cam.pitch + (1.4 - cam.pitch) * out + calm * 0.012 * Math.cos(now / 6700),
+        REST.dist * (1 + out * 1.5) + calm * 0.02 * Math.sin(now / 8300)
+      );
       const fade = Math.min(1, age / 700);
+      const flat = !deep || deep.lost;
+      if (!flat) deep.draw(now, fade);
 
       ctx.globalCompositeOperation = 'lighter';
-      for (const n of nebulae) {
-        const p = project(n);
-        if (p.z < 0.25) continue;
-        const r = (n.size * focal * zoom) / p.z;
-        ctx.globalAlpha = 0.5 * fade * Math.min(1, (p.z - 0.25) * 3);
-        ctx.drawImage(n.sprite, p.x - r, p.y - r, r * 2, r * 2);
+      if (flat) sparse(fade);
+
+      // 很远的别的星系
+      for (const g of far) {
+        const p = cast(g.x, g.y, g.z);
+        if (p.z <= 0.05 || p.x < -20 || p.x > w + 20 || p.y < -20 || p.y > h + 20) continue;
+        // 正好落在星系盘后面的不画：它在盘的后面，而这一层画在盘的上面
+        if (g.y < 0 && Math.hypot(lens.ex - (lens.ey / g.y) * g.x, lens.ez - (lens.ey / g.y) * g.z) < 1.3) continue;
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(g.tilt);
+        ctx.scale(1, g.flat);
+        ctx.globalAlpha = 0.34 * fade;
+        ctx.drawImage(puff(g.hue, 0.6, 0.66), -g.size, -g.size, g.size * 2, g.size * 2);
+        ctx.restore();
       }
 
-      for (const s of backdrop) {
-        const p = project(s);
-        if (p.z <= 0.08 || p.x < -4 || p.x > w + 4 || p.y < -4 || p.y > h + 4) continue;
-        const twinkle = 0.5 + 0.5 * Math.sin(now / s.rate + s.phase);
-        ctx.globalAlpha = fade * (0.25 + 0.75 * twinkle);
-        if (s.bright) {
-          const r = 3 + 3 * twinkle;
-          ctx.drawImage(glowSprite(215), p.x - r, p.y - r, r * 2, r * 2);
-        } else {
-          ctx.fillStyle = s.color;
-          ctx.fillRect(p.x, p.y, s.size, s.size);
-        }
-      }
+      // 星系核心的光晕，一呼一吸
+      const core = project(0, 0, 0);
+      const bloom = ((focal * 0.17) / core.z) * (1 + 0.06 * Math.sin(now / 1900));
+      const squash = 0.6 - 0.4 * lens.fy;
+      ctx.globalAlpha = 0.22 * fade;
+      ctx.drawImage(glowSprite(40), core.x - bloom, core.y - bloom * squash, bloom * 2, bloom * 2 * squash);
 
       // 流星
       if (!reduceMotion && now > nextMeteor) {
@@ -1622,128 +2087,150 @@
       }
       meteors = meteors.filter((m) => m.life > 0);
 
-      // 先算出每颗照片星落在屏幕的哪里，连线和点击判断都要用
+      // 先算出每颗照片星此刻在哪、落在屏幕的哪里，连线和点击判断都要用。星星在盘面上方轻轻浮沉
       nodes.forEach((n, i) => {
-        const p = project(n);
-        n.front = p.z > 0.08;
+        n.x = Math.cos(n.angle + turn) * n.reach;
+        n.y = n.lift + calm * 0.012 * Math.sin(now / 1300 + n.phase);
+        n.z = Math.sin(n.angle + turn) * n.reach;
+        const p = project(n.x, n.y, n.z);
+        n.front = p.z > 0.05;
         n.sx = p.x;
         n.sy = p.y;
+        n.depth = p.z;
         n.grow = reduceMotion ? 1 : Math.max(0, Math.min(1, (age - 900 - i * 170) / 600));
       });
 
-      // 转到一颗照片星都看不见的方向时，在屏幕边上指个路
-      if (age > 2600 && !nodes.some((n) => n.front && n.sx > 16 && n.sx < w - 16 && n.sy > 16 && n.sy < h - 16)) {
-        let turn = 0;
-        let lift = 0;
-        let nearest = Infinity;
-        for (const n of nodes) {
-          let d = (n.yaw - cam.yaw) % (Math.PI * 2);
-          if (d > Math.PI) d -= Math.PI * 2;
-          if (d < -Math.PI) d += Math.PI * 2;
-          if (Math.abs(d) < nearest) {
-            nearest = Math.abs(d);
-            turn = d;
-            lift = n.pitch - cam.pitch;
-          }
-        }
-        // 左右差得不多就说明是抬头或低头看过了
-        const sideways = nearest > 0.45;
-        const dx = sideways ? Math.sign(turn) : 0;
-        const dy = sideways ? 0 : -Math.sign(lift);
-        const nudge = 5 * Math.sin(now / 260);
-        const x = w / 2 + dx * (w / 2 - 30 + nudge);
-        const y = h / 2 + dy * (h / 2 - 96 + nudge);
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = 0.72 + 0.25 * Math.sin(now / 260);
-        ctx.strokeStyle = '#ffd9a0';
-        ctx.lineWidth = 1.6;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.beginPath();
-        ctx.moveTo(x - dx * 7 - dy * 9, y - dy * 7 - dx * 9);
-        ctx.lineTo(x, y);
-        ctx.lineTo(x - dx * 7 + dy * 9, y - dy * 7 + dx * 9);
-        ctx.stroke();
-        ctx.font = LABEL;
-        ctx.fillStyle = '#ffe9c4';
-        ctx.textBaseline = 'middle';
-        ctx.textAlign = dx > 0 ? 'right' : dx < 0 ? 'left' : 'center';
-        ctx.fillText('星星在这边', x - dx * 18, y - dy * 24);
-        ctx.globalCompositeOperation = 'lighter';
-      }
-
-      // 星座连线：两头都点亮了就变成金色实线
+      // 把这一年的星星按顺序连起来的螺线：两头都点亮了就变成金色实线
+      const arc = (a, b, t) => orbit(a.angle + (b.angle - a.angle) * t, a.reach + (b.reach - a.reach) * t, a.y + (b.y - a.y) * t);
       ctx.lineWidth = 1;
       for (let i = 1; i < nodes.length; i++) {
         const a = nodes[i - 1];
         const b = nodes[i];
-        if (!a.front || !b.front || !b.grow) continue;
+        if (!b.grow) continue;
         const lit = a.seen && b.seen;
-        ctx.globalAlpha = (lit ? 0.6 : 0.24) * b.grow;
+        ctx.globalAlpha = (lit ? 0.62 : 0.3) * b.grow;
         ctx.strokeStyle = lit ? '#ffd9a0' : '#bcd0ff';
-        ctx.setLineDash(lit ? [] : [3, 6]);
+        ctx.setLineDash(lit ? [] : [2, 5]);
         ctx.beginPath();
-        ctx.moveTo(a.sx, a.sy);
-        ctx.lineTo(b.sx, b.sy);
+        for (let k = 0; k <= 12; k++) {
+          const p = arc(a, b, (k / 12) * b.grow);
+          if (k) ctx.lineTo(p.x, p.y);
+          else ctx.moveTo(p.x, p.y);
+        }
         ctx.stroke();
       }
       ctx.setLineDash([]);
+      // 一粒光顺着螺线从第一颗星流到最后一颗
+      if (nodes.length > 1 && !reduceMotion && nodes[nodes.length - 1].grow >= 1) {
+        const at = ((now / 1500) % (nodes.length + 0.6)) - 0.3;
+        const i = Math.max(0, Math.min(nodes.length - 2, Math.floor(at)));
+        const p = arc(nodes[i], nodes[i + 1], Math.max(0, Math.min(1, at - i)));
+        ctx.globalAlpha = Math.max(0, Math.min(1, (at + 0.3) * 3, (nodes.length - 0.7 - at) * 3));
+        ctx.drawImage(glowSprite(40), p.x - 6, p.y - 6, 12, 12);
+      }
 
       ctx.font = LABEL;
       ctx.textBaseline = 'middle';
       for (const n of nodes) {
-        if (!n.front || !n.grow || n.sx < -80 || n.sx > w + 80 || n.sy < -80 || n.sy > h + 80) continue;
+        if (!n.front || !n.grow) continue;
         const slow = 0.5 + 0.5 * Math.sin(now / 620 + n.phase);
         const quick = 0.5 + 0.5 * Math.sin(now / 97 + n.phase * 3);
-        const r = n.radius * backOut(n.grow) * (1 + 0.04 * slow);
-        const sprite = glowSprite(n.seen ? 40 : 215);
+        const r = Math.max(5, Math.min(10, 7.5 * Math.pow(n.depth, -0.7))) * backOut(n.grow);
+        const sprite = glowSprite(n.seen ? 40 : 205);
+        ctx.globalCompositeOperation = 'lighter';
+
+        // 垂到盘面上的一道细光和落点的一小团亮：看得出这颗星悬在星系上方多高
+        const foot = orbit(n.angle, n.reach, 0);
+        const stem = ctx.createLinearGradient(n.sx, n.sy, foot.x, foot.y);
+        stem.addColorStop(0, n.seen ? 'rgba(255, 217, 160, 0.55)' : 'rgba(190, 215, 255, 0.5)');
+        stem.addColorStop(1, 'rgba(190, 215, 255, 0)');
+        ctx.globalAlpha = n.grow;
+        ctx.strokeStyle = stem;
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.moveTo(n.sx, n.sy);
+        ctx.lineTo(foot.x, foot.y);
+        ctx.stroke();
+        ctx.globalAlpha = n.grow * (0.25 + 0.2 * slow);
+        ctx.drawImage(sprite, foot.x - r * 1.6, foot.y + r * 1.6 * lens.fy, r * 3.2, r * -3.2 * lens.fy);
+
+        // 一圈圈往外荡开的光环，和星系盘一个朝向
+        if (!reduceMotion) {
+          const wave = (now / 2600 + n.phase) % 1;
+          ctx.globalAlpha = n.grow * (1 - wave) * 0.55;
+          ctx.strokeStyle = n.seen ? '#ffd9a0' : '#cfe2ff';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          for (let k = 0; k <= 28; k++) {
+            const a = (k / 28) * Math.PI * 2;
+            const p = project(n.x + Math.cos(a) * (0.012 + 0.07 * wave), n.y, n.z + Math.sin(a) * (0.012 + 0.07 * wave));
+            if (k) ctx.lineTo(p.x, p.y);
+            else ctx.moveTo(p.x, p.y);
+          }
+          ctx.stroke();
+
+          // 绕着它转的几粒星屑，各在各的轨道上，拖一条小尾巴
+          for (let k = 0; k < 3; k++) {
+            const way = k % 2 ? -1 : 1;
+            const wide = 0.03 + k * 0.011;
+            for (let t = 6; t >= 0; t--) {
+              const a = way * (now / (520 + k * 190) - t * 0.13) + n.phase * (k + 2);
+              const p = project(n.x + Math.cos(a) * wide, n.y + Math.sin(a) * wide * (k - 1) * 0.6, n.z + Math.sin(a) * wide);
+              const size = (2.6 - t * 0.3) * Math.min(1.6, 1.2 / p.z);
+              ctx.globalAlpha = n.grow * (1 - t / 7) * 0.9;
+              ctx.drawImage(sprite, p.x - size, p.y - size, size * 2, size * 2);
+            }
+          }
+        }
 
         // 光晕和十字星芒，忽大忽小就是在「闪」
-        ctx.globalCompositeOperation = 'lighter';
-        const halo = r * (2.8 + 0.6 * slow);
-        ctx.globalAlpha = n.grow * (0.5 + 0.3 * slow + 0.12 * quick);
+        const halo = r * (2.3 + 0.6 * slow);
+        ctx.globalAlpha = n.grow * (0.5 + 0.3 * slow + 0.15 * quick);
         ctx.drawImage(sprite, n.sx - halo, n.sy - halo, halo * 2, halo * 2);
-        const ray = r * (2.4 + 2 * slow + 0.5 * quick);
-        ctx.globalAlpha = n.grow * (0.35 + 0.5 * slow);
-        ctx.drawImage(sprite, n.sx - ray, n.sy - 2, ray * 2, 4);
-        ctx.drawImage(sprite, n.sx - 2, n.sy - ray, 4, ray * 2);
+        const ray = r * (2.6 + 2.4 * slow + 0.7 * quick);
+        ctx.globalAlpha = n.grow * (0.4 + 0.5 * slow);
+        ctx.drawImage(sprite, n.sx - ray, n.sy - 1.3, ray * 2, 2.6);
+        ctx.drawImage(sprite, n.sx - 1.3, n.sy - ray, 2.6, ray * 2);
 
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = n.grow;
-        ctx.fillStyle = '#0a1024';
-        ctx.beginPath();
-        ctx.arc(n.sx, n.sy, r, 0, Math.PI * 2);
-        ctx.fill();
         if (n.thumb) {
-          ctx.globalAlpha = n.grow * (n.seen ? 1 : 0.86);
-          ctx.drawImage(n.thumb, n.sx - r, n.sy - r, r * 2, r * 2);
-        } else if (n.video) {
-          ctx.fillStyle = '#eef3ff';
-          ctx.beginPath();
-          ctx.moveTo(n.sx - r * 0.26, n.sy - r * 0.42);
-          ctx.lineTo(n.sx + r * 0.46, n.sy);
-          ctx.lineTo(n.sx - r * 0.26, n.sy + r * 0.42);
-          ctx.fill();
-        } else {
-          // 照片还没放进来：只画一颗星
-          ctx.globalCompositeOperation = 'lighter';
-          ctx.drawImage(sprite, n.sx - r * 0.9, n.sy - r * 0.9, r * 1.8, r * 1.8);
+          // 星星中间嵌着小小的一张照片
           ctx.globalCompositeOperation = 'source-over';
+          ctx.globalAlpha = n.grow * (n.seen ? 1 : 0.9);
+          ctx.drawImage(n.thumb, n.sx - r, n.sy - r, r * 2, r * 2);
+          ctx.globalAlpha = n.grow * 0.85;
+          ctx.strokeStyle = n.seen ? '#ffd9a0' : '#dbe8ff';
+          ctx.lineWidth = 0.8;
+          ctx.beginPath();
+          ctx.arc(n.sx, n.sy, r + 0.6, 0, Math.PI * 2);
+          ctx.stroke();
+        } else {
+          // 照片还没放进来、或者是没有封面的视频：就是一颗亮星
+          ctx.globalAlpha = n.grow;
+          ctx.drawImage(sprite, n.sx - r * 0.9, n.sy - r * 0.9, r * 1.8, r * 1.8);
+          if (n.video) {
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.fillStyle = '#0a1024';
+            ctx.beginPath();
+            ctx.moveTo(n.sx - r * 0.22, n.sy - r * 0.36);
+            ctx.lineTo(n.sx + r * 0.4, n.sy);
+            ctx.lineTo(n.sx - r * 0.22, n.sy + r * 0.36);
+            ctx.fill();
+          }
         }
-        ctx.globalAlpha = n.grow * 0.9;
-        ctx.strokeStyle = n.seen ? '#ffd9a0' : '#cfe0ff';
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.arc(n.sx, n.sy, r + 1.5, 0, Math.PI * 2);
-        ctx.stroke();
 
-        // 旁边的小字，靠右的星星把字放在左边，免得出屏
+        // 旁边的小字，靠右的星星把字放在左边，免得出屏；离得远的字淡一些
         if (n.photo.title) {
           const left = n.sx > w * 0.6;
-          ctx.globalAlpha = n.grow * (n.seen ? 0.95 : 0.72);
-          ctx.fillStyle = n.seen ? '#ffe9c4' : '#dfe8ff';
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.globalAlpha = n.grow * (n.seen ? 0.95 : 0.78) * Math.max(0.55, Math.min(1, 1.25 / n.depth));
+          ctx.fillStyle = n.seen ? '#ffe9c4' : '#eef3ff';
           ctx.textAlign = left ? 'right' : 'left';
-          ctx.fillText(n.photo.title, n.sx + (left ? -1 : 1) * (r + 10), n.sy);
+          // 字压在星系上，先描一圈暗边才看得清
+          ctx.strokeStyle = 'rgba(3, 5, 16, 0.7)';
+          ctx.lineWidth = 3;
+          ctx.lineJoin = 'round';
+          ctx.strokeText(n.photo.title, n.sx + (left ? -1 : 1) * (r + 9), n.sy);
+          ctx.fillText(n.photo.title, n.sx + (left ? -1 : 1) * (r + 9), n.sy);
         }
       }
     };
@@ -1778,20 +2265,23 @@
       current = -1;
       updateTip();
 
-      // 星星少就正对着星座中间，多了就从第一颗看起，后面的拖过去找
-      cam.yaw = nodes.length <= 4 ? 0 : nodes[0].yaw + entry.gap * 1.2;
-      cam.pitch = 0;
+      // 镜头停在螺线中段那颗星的这一侧，斜着往下看
+      turn = 0;
+      cam.yaw = Math.PI / 2 - nodes[nodes.length >> 1].angle;
+      cam.pitch = REST.pitch;
       cam.vyaw = cam.vpitch = 0;
       cam.target = null;
+      if (deep) deep.load(entry.model);
       meteors = [];
       rings = [];
+      clouds = [];
       flybys = [];
       passed = Math.floor(entry.from / 12);
       spin = 0;
       // 今年的相册不用往回飞，飞一小段就到
       warpMs = entry.from > entry.to ? WARP_MS : 3000;
       setText('warpDest', `目的地 ${(item.date || '').slice(0, 7)}`);
-      streaks = Array.from({ length: 300 }, () => ({
+      streaks = Array.from({ length: 380 }, () => ({
         a: rand(0, Math.PI * 2),
         r: rand(0.08, 1.2),
         z: rand(0.05, 1),
@@ -1842,15 +2332,15 @@
       drag.x = e.clientX;
       drag.y = e.clientY;
       drag.moved += Math.abs(dx) + Math.abs(dy);
-      // 手指往哪边拖，天空就跟着往哪边走
-      cam.yaw -= dx / focal;
-      cam.pitch += dy / focal;
+      // 手指按着星系靠近自己的这一侧：往哪边拖，它就往哪边转；往下拖是压过去俯视，往上是放平
+      cam.yaw += (dx / focal) * 1.5;
+      cam.pitch += (dy / focal) * 1.2;
       // 松手时的速度按时间算（折成每帧多少），不同刷新率的手机甩出去一样远
       const now = performance.now();
       const perFrame = 16.67 / Math.max(4, now - drag.last) / focal;
       drag.last = now;
-      cam.vyaw = cam.vyaw * 0.5 - dx * perFrame * 0.5;
-      cam.vpitch = cam.vpitch * 0.5 + dy * perFrame * 0.5;
+      cam.vyaw = cam.vyaw * 0.5 + dx * perFrame * 0.75;
+      cam.vpitch = cam.vpitch * 0.5 + dy * perFrame * 0.6;
     });
     root.addEventListener('pointerup', (e) => {
       if (!drag || e.pointerId !== drag.id) return;
@@ -1873,7 +2363,7 @@
       tapAt = null;
       if (!point || e.target.closest('button, .viewer')) return;
       let best = -1;
-      let nearest = 38;
+      let nearest = 36;
       entry.nodes.forEach((n, i) => {
         if (!n.front || n.grow < 1) return;
         const distance = Math.hypot(n.sx - point.x, n.sy - point.y);
