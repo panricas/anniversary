@@ -1766,55 +1766,270 @@
       };
     })();
 
-    // 舱盖：窗框是一整道拱形的厚玻璃，外面一圈才是船壳。透过厚玻璃看到的不是正后方，而是被折过来的
-    // 旁边那一片，所以把隧道画面放大一点画进玻璃的形状里，光线穿过去的地方就会错开一截；边上再描倒角和高光
+    // 舱盖：一整道拱形的厚玻璃，断面是圆的，像一根弯成拱的玻璃棒。拱是一条超椭圆，从窗柱到拱顶一路圆过去，
+    // 没有折角。玻璃上的明暗只跟「离中线多远、在拱的哪一段」有关，所以尺寸变了才逐像素算一次，存成两张图
+    // （压暗的一张、发亮的一张）。每帧只做三件事：把隧道画面沿着中线翻过来画进玻璃里（圆玻璃棒里看到的景
+    // 是反的，光线穿过去会折一下），盖上那两张图，再描一段慢慢游走的高光
     const canopy = (() => {
       const pane = $('cockpitCanopy');
       const g = pane.getContext('2d');
       const EDGE = 4; // 驾驶舱四周比屏幕多出的一圈，和 .cockpit 的 inset 对应
-      // 拱的左半边，坐标是占驾驶舱宽高的百分比：起点，然后每段是 [控制点, 控制点, 终点]，右半边照着镜像
-      const INNER = [[3, 94], [[4.2, 60], [6.3, 16.3], [12, 13]], [[20.6, 9], [36, 5.2], [50, 5.2]]];
-      const OUTER = [[0, 72], [[0.4, 50], [2.85, 14.75], [9.3, 11.75]], [[17.9, 7.75], [35, 3.2], [50, 3.2]]];
+      const N = 240; // 中线切成多少小段
+      const SLABS = 40; // 折射分成多少段来翻
+      const SPEC = -0.46; // 高光落在断面的哪儿：-1 是朝窗里的那条边，1 是贴着船壳的那条边
+      const shade = document.createElement('canvas');
+      const gloss = document.createElement('canvas');
+      const bell = (x, at, wide) => Math.exp(-((x - at) * (x - at)) / (wide * wide));
       let W = 0;
       let H = 0;
-      let rim = null;
+      let built = '';
       let hull = null;
-      let rimIn = null;
-      let rimOut = null;
+      let glint = null;
+      let slabs = [];
       let scratches = [];
 
-      const trace = (path, half, mirror, move) => {
-        const X = (u) => ((mirror ? 100 - u : u) / 100) * W;
-        const Y = (v) => (v / 100) * H;
-        const [start, ...segs] = half;
-        if (move) path.moveTo(X(start[0]), Y(start[1]));
-        else path.lineTo(X(start[0]), Y(start[1]));
-        for (const [a, b, to] of segs) path.bezierCurveTo(X(a[0]), Y(a[1]), X(b[0]), Y(b[1]), X(to[0]), Y(to[1]));
-        for (let i = segs.length - 1; i >= 0; i--) {
-          const [a, b] = segs[i];
-          const to = i ? segs[i - 1][2] : start;
-          path.bezierCurveTo(X(100 - b[0]), Y(b[1]), X(100 - a[0]), Y(a[1]), X(100 - to[0]), Y(to[1]));
+      // 拱的中线：超椭圆的上半边，按弧长均匀取 N + 1 个点，每个点带一条朝外的法线和这一处玻璃的半宽
+      const spine = () => {
+        const a = W * 0.462;
+        const b = H * 0.925;
+        const power = 2 / 3.6;
+        const raw = [];
+        let total = 0;
+        for (let i = 0; i <= 1600; i++) {
+          const at = Math.PI * (1.02 - 1.04 * (i / 1600));
+          const c = Math.cos(at);
+          const s = Math.sin(at);
+          const p = {
+            x: W / 2 + a * Math.sign(c) * Math.pow(Math.abs(c), power),
+            y: H * 0.972 - b * Math.sign(s) * Math.pow(Math.abs(s), power),
+            run: 0
+          };
+          if (i) total += Math.hypot(p.x - raw[i - 1].x, p.y - raw[i - 1].y);
+          p.run = total;
+          raw.push(p);
+        }
+        const pts = [];
+        for (let i = 0, k = 0; i <= N; i++) {
+          const want = (total * i) / N;
+          while (k < raw.length - 2 && raw[k + 1].run < want) k++;
+          const p = raw[k];
+          const q = raw[k + 1];
+          const u = (want - p.run) / (q.run - p.run || 1);
+          pts.push({ x: p.x + (q.x - p.x) * u, y: p.y + (q.y - p.y) * u, nx: 0, ny: 0, half: W * (0.026 + 0.011 * Math.sin((Math.PI * i) / N)) });
+        }
+        for (let i = 0; i <= N; i++) {
+          const p = pts[Math.max(0, i - 1)];
+          const q = pts[Math.min(N, i + 1)];
+          const len = Math.hypot(q.x - p.x, q.y - p.y);
+          pts[i].nx = (q.y - p.y) / len;
+          pts[i].ny = -(q.x - p.x) / len;
+        }
+        return pts;
+      };
+
+      // 离中线 by 个半宽（或再加 px 像素）的那条平行线，from 到 to 之间的一段
+      const offset = (path, pts, by, px, from, to, move) => {
+        const step = from < to ? 1 : -1;
+        for (let i = from; i !== to + step; i += step) {
+          const p = pts[i];
+          const d = p.half * by + px;
+          if (move && i === from) path.moveTo(p.x + p.nx * d, p.y + p.ny * d);
+          else path.lineTo(p.x + p.nx * d, p.y + p.ny * d);
         }
         return path;
+      };
+
+      const build = () => {
+        const pts = spine();
+        const PW = pane.width;
+        const PH = pane.height;
+        // 每个像素离中线多远（带正负，朝外为正）、落在拱的哪一段。只算玻璃附近的一圈
+        const reach = (pts[N >> 1].half + 20) * dpr;
+        const near = new Float32Array(PW * PH).fill(reach * reach);
+        const where = new Float32Array(PW * PH);
+        const outer = new Uint8Array(PW * PH);
+        for (let i = 0; i < N; i++) {
+          const ax = pts[i].x * dpr;
+          const ay = pts[i].y * dpr;
+          const dx = pts[i + 1].x * dpr - ax;
+          const dy = pts[i + 1].y * dpr - ay;
+          const len = dx * dx + dy * dy;
+          const x0 = Math.max(0, Math.floor(Math.min(ax, ax + dx) - reach));
+          const x1 = Math.min(PW - 1, Math.ceil(Math.max(ax, ax + dx) + reach));
+          const y0 = Math.max(0, Math.floor(Math.min(ay, ay + dy) - reach));
+          const y1 = Math.min(PH - 1, Math.ceil(Math.max(ay, ay + dy) + reach));
+          for (let y = y0; y <= y1; y++) {
+            for (let x = x0; x <= x1; x++) {
+              const px = x + 0.5 - ax;
+              const py = y + 0.5 - ay;
+              const u = Math.max(0, Math.min(1, (px * dx + py * dy) / len));
+              const ex = px - dx * u;
+              const ey = py - dy * u;
+              const d = ex * ex + ey * ey;
+              const k = y * PW + x;
+              if (d < near[k]) {
+                near[k] = d;
+                where[k] = i + u;
+                outer[k] = ex * dy - ey * dx > 0 ? 1 : 0;
+              }
+            }
+          }
+        }
+
+        // 拱的哪一段受光：左肩最亮（舱里的灯），拱顶和右肩各兜着一点，窗柱下半截很暗
+        const lit = pts.map((p, i) => {
+          const s = i / N;
+          return Math.min(1, 0.14 + 0.95 * bell(s, 0.3, 0.075) + 0.5 * bell(s, 0.71, 0.05) + 0.3 * bell(s, 0.5, 0.1) + 0.28 * bell(s, 0.13, 0.05) + 0.2 * bell(s, 0.88, 0.04));
+        });
+
+        shade.width = gloss.width = PW;
+        shade.height = gloss.height = PH;
+        const dark = shade.getContext('2d');
+        const bright = gloss.getContext('2d');
+        const a = dark.createImageData(PW, PH);
+        const b = bright.createImageData(PW, PH);
+        const limit = reach * reach;
+        for (let k = 0; k < near.length; k++) {
+          if (near[k] >= limit) continue;
+          const j = Math.min(N, Math.round(where[k]));
+          const half = pts[j].half * dpr;
+          const glow = lit[j];
+          const dist = Math.sqrt(near[k]);
+          const t = ((outer[k] ? 1 : -1) * dist) / half;
+          const off = Math.abs(t);
+          // 在玻璃里是 1，出了玻璃是 0，边上一个多像素的过渡
+          const cover = Math.max(0, Math.min(1, (half - dist) / 1.5 + 0.5));
+          let red = 0;
+          let green = 0;
+          let blue = 0;
+          if (cover > 0) {
+            // 圆玻璃贴着两条边各有一道暗带，中间才是透的
+            a.data[k * 4] = 4;
+            a.data[k * 4 + 1] = 8;
+            a.data[k * 4 + 2] = 24;
+            a.data[k * 4 + 3] = 255 * cover * (0.24 + 0.4 * bell(off, 0.74, 0.15));
+            // 断面是圆的：越靠两条边，玻璃面越是侧对着人，反的光越多（一片渐变，不是一条线）；朝光的一侧
+            // 有一片柔的高光，受光最足的那几段中间再有一道亮芯；背光的一侧兜着一点散光
+            const round = Math.pow(1 - Math.sqrt(Math.max(0, 1 - t * t)), 1.5);
+            const edge = cover * (round * (0.2 + 0.3 * glow) + bell(off, 1, 0.07) * 0.16);
+            const spec = cover * (bell(t, SPEC, 0.27) * (0.08 + 0.42 * glow) + bell(t, SPEC, 0.075) * glow * glow * 0.85);
+            const back = cover * bell(t, 0.42, 0.3) * (0.07 + 0.12 * glow);
+            red = 170 * edge + 255 * spec + 120 * back + 140 * cover * 0.06;
+            green = 212 * edge + 255 * spec + 190 * back + 200 * cover * 0.06;
+            blue = 255 * (edge + spec + back + cover * 0.06);
+          }
+          if (cover < 1) {
+            const past = Math.max(0, dist - half) / dpr;
+            if (outer[k]) {
+              // 玻璃嵌在船壳里：贴着玻璃一圈金属压条的反光
+              const lip = (1 - cover) * (0.1 * bell(past, 3, 1.6) + 0.07 * Math.exp(-past / 10));
+              red += 120 * lip;
+              green += 160 * lip;
+              blue += 235 * lip;
+            } else {
+              // 玻璃的光往窗里漫出来一点
+              const spill = (1 - cover) * Math.exp(-past / 8) * (0.045 + 0.075 * glow);
+              red += 130 * spill;
+              green += 180 * spill;
+              blue += 255 * spill;
+            }
+          }
+          const top = Math.max(red, green, blue);
+          if (top > 0) {
+            b.data[k * 4] = (red / top) * 255;
+            b.data[k * 4 + 1] = (green / top) * 255;
+            b.data[k * 4 + 2] = (blue / top) * 255;
+            b.data[k * 4 + 3] = Math.min(255, top);
+          }
+        }
+        dark.putImageData(a, 0, 0);
+        bright.putImageData(b, 0, 0);
+
+        // 整面玻璃是鼓出去的：舱里的灯映在上面是顺着拱弯过去的几道月牙，不是直的
+        bright.setTransform(dpr, 0, 0, dpr, 0, 0);
+        bright.globalCompositeOperation = 'lighter';
+        bright.lineCap = 'round';
+        bright.lineJoin = 'round';
+        const crescent = (at, inset, spread, widths, alpha) => {
+          const p = pts[Math.round(at * N)];
+          const fade = bright.createRadialGradient(p.x, p.y, 0, p.x, p.y, W * spread);
+          fade.addColorStop(0, `rgba(215, 232, 255, ${alpha})`);
+          fade.addColorStop(0.5, `rgba(215, 232, 255, ${alpha * 0.4})`);
+          fade.addColorStop(1, 'rgba(215, 232, 255, 0)');
+          bright.strokeStyle = fade;
+          const line = offset(new Path2D(), pts, -1, -inset, 0, N, true);
+          for (const width of widths) {
+            bright.lineWidth = width;
+            bright.stroke(line);
+          }
+        };
+        crescent(0.29, 44, 0.46, [56, 44, 32, 21, 11], 0.022);
+        crescent(0.72, 32, 0.28, [36, 26, 16, 7], 0.014);
+        bright.setTransform(1, 0, 0, 1, 0, 0);
+
+        hull = offset(new Path2D(), pts, 1, -0.5, 0, N, true);
+        hull.lineTo(W + 9, pts[N].y);
+        hull.lineTo(W + 9, -9);
+        hull.lineTo(-9, -9);
+        hull.lineTo(-9, pts[0].y);
+        hull.closePath();
+        glint = offset(new Path2D(), pts, SPEC, 0, 0, N, true);
+
+        // 折射：玻璃切成一段段，每段沿自己那一截中线把隧道画面翻过来。只画翻过来以后落在这一段里的那一小块
+        const scale = canvas.width / w;
+        slabs = [];
+        for (let k = 0; k < SLABS; k++) {
+          const from = Math.round((k * N) / SLABS);
+          const to = Math.round(((k + 1) * N) / SLABS);
+          // 两头各探出去不到半个像素，相邻两段之间才不会漏一条缝
+          const path = new Path2D();
+          for (const [i, side, lap] of [[from, -1, -0.4], [from, 1, -0.4], [to, 1, 0.4], [to, -1, 0.4]]) {
+            if (side < 0 && i === to) offset(path, pts, -1, 0, to - 1, from + 1, false);
+            path.lineTo(pts[i].x + pts[i].nx * pts[i].half * side - pts[i].ny * lap, pts[i].y + pts[i].ny * pts[i].half * side + pts[i].nx * lap);
+            if (side > 0 && i === from) offset(path, pts, 1, 0, from + 1, to - 1, false);
+          }
+          path.closePath();
+          const mid = pts[(from + to) >> 1];
+          const tx = -mid.ny;
+          const ty = mid.nx;
+          const m = [2 * tx * tx - 1, 2 * tx * ty, 2 * tx * ty, 2 * ty * ty - 1, 0, 0];
+          m[4] = mid.x - (m[0] * mid.x + m[2] * mid.y);
+          m[5] = mid.y - (m[1] * mid.x + m[3] * mid.y);
+          let x0 = Infinity;
+          let y0 = Infinity;
+          let x1 = -Infinity;
+          let y1 = -Infinity;
+          for (let i = from; i <= to; i++) {
+            for (const side of [-1, 1]) {
+              const x = pts[i].x + pts[i].nx * pts[i].half * side;
+              const y = pts[i].y + pts[i].ny * pts[i].half * side;
+              const fx = m[0] * x + m[2] * y + m[4];
+              const fy = m[1] * x + m[3] * y + m[5];
+              x0 = Math.min(x0, fx);
+              y0 = Math.min(y0, fy);
+              x1 = Math.max(x1, fx);
+              y1 = Math.max(y1, fy);
+            }
+          }
+          x0 = Math.max(EDGE, Math.floor(x0 - 1));
+          y0 = Math.max(EDGE, Math.floor(y0 - 1));
+          x1 = Math.min(EDGE + w, Math.ceil(x1 + 1));
+          y1 = Math.min(EDGE + h, Math.ceil(y1 + 1));
+          if (x1 <= x0 || y1 <= y0) continue;
+          slabs.push({ path, m, x: x0, y: y0, wide: x1 - x0, tall: y1 - y0, sx: (x0 - EDGE) * scale, sy: (y0 - EDGE) * scale, sw: (x1 - x0) * scale, sh: (y1 - y0) * scale });
+        }
       };
 
       const resize = () => {
         W = w + EDGE * 2;
         H = h + EDGE * 2;
+        const key = `${W}x${H}@${dpr}`;
         pane.width = W * dpr;
         pane.height = H * dpr;
         g.setTransform(dpr, 0, 0, dpr, 0, 0);
-        rim = trace(new Path2D(), INNER, false, true);
-        rim.lineTo(W, H * 0.94);
-        trace(rim, OUTER, true, false);
-        rim.lineTo(0, H * 0.94);
-        rim.closePath();
-        hull = trace(new Path2D(), OUTER, false, true);
-        hull.lineTo(W, 0);
-        hull.lineTo(0, 0);
-        hull.closePath();
-        rimIn = trace(new Path2D(), INNER, false, true);
-        rimOut = trace(new Path2D(), OUTER, false, true);
+        g.lineCap = 'round';
+        if (key !== built) build();
+        built = key;
         // 玻璃上的细划痕：迎着光看是绕着光源的一圈圈弧
         scratches = Array.from({ length: 54 }, () => ({ r: rand(0.1, 0.66), a: rand(0, Math.PI * 2), len: rand(0.05, 0.24) }));
       };
@@ -1824,62 +2039,39 @@
       // light 是隧道有多亮（0–1），cx / cy 是隧道尽头在屏幕上的位置
       const draw = (now, light, cx, cy) => {
         g.clearRect(0, 0, W, H);
-        const bend = (scale, alpha) => {
-          g.globalAlpha = alpha;
-          g.drawImage(canvas, EDGE + cx - cx * scale, EDGE + cy - cy * scale, w * scale, h * scale);
-        };
 
         // 玻璃外面的船壳，只在两个上角露一点
         const shell = g.createLinearGradient(0, 0, 0, H * 0.72);
-        shell.addColorStop(0, 'rgba(2, 3, 9, 0.96)');
-        shell.addColorStop(1, 'rgba(6, 9, 24, 0.9)');
+        shell.addColorStop(0, 'rgba(2, 3, 9, 0.97)');
+        shell.addColorStop(1, 'rgba(6, 9, 24, 0.92)');
         g.fillStyle = shell;
         g.fill(hull);
 
-        g.save();
-        g.clip(rim);
-        g.fillStyle = 'rgba(4, 6, 20, 0.86)';
-        g.fillRect(0, 0, W, H);
-        bend(1.1, 1);
-        // 玻璃内壁又反了一次，叠一层更淡、错得更远的影子
-        g.globalCompositeOperation = 'lighter';
-        bend(0.9, 0.4);
-        g.globalAlpha = 1;
-        g.fillStyle = `rgba(140, 195, 255, ${0.05 + light * 0.07})`;
-        g.fillRect(0, 0, W, H);
-        // 倒角：越靠棱越亮，厚玻璃的断面带一点青
-        g.strokeStyle = '#c6ecff';
-        for (const [width, alpha] of [[28, 0.03], [15, 0.045], [6, 0.085]]) {
-          g.lineWidth = width;
-          g.globalAlpha = alpha * (1 + light * 1.4);
-          g.stroke(rimIn);
+        for (const s of slabs) {
+          g.save();
+          g.clip(s.path);
+          g.transform(s.m[0], s.m[1], s.m[2], s.m[3], s.m[4], s.m[5]);
+          g.drawImage(canvas, s.sx, s.sy, s.sw, s.sh, s.x, s.y, s.wide, s.tall);
+          g.restore();
         }
-        g.lineWidth = 10;
-        g.globalAlpha = 0.06 + light * 0.06;
-        g.stroke(rimOut);
-        g.restore();
+        g.drawImage(shade, 0, 0, W, H);
+        g.globalCompositeOperation = 'lighter';
+        g.globalAlpha = 0.5 + light * 0.5;
+        g.drawImage(gloss, 0, 0, W, H);
 
-        // 棱线
-        g.lineWidth = 1.2;
-        g.strokeStyle = `rgba(214, 234, 255, ${0.3 + light * 0.3})`;
-        g.stroke(rimIn);
-        g.lineWidth = 1;
-        g.strokeStyle = `rgba(170, 205, 255, ${0.18 + light * 0.2})`;
-        g.stroke(rimOut);
-        // 棱上的高光：窗柱上各有一小段特别亮，慢慢上下游走；左肩上兜着一片
-        const at = 0.34 + 0.07 * Math.sin(now / 1400);
-        const glint = g.createLinearGradient(0, 0, 0, H);
-        glint.addColorStop(at - 0.13, 'rgba(255, 255, 255, 0)');
-        glint.addColorStop(at, `rgba(255, 255, 255, ${0.75 + light * 0.25})`);
-        glint.addColorStop(at + 0.15, 'rgba(255, 255, 255, 0)');
-        g.lineWidth = 1.6;
-        g.strokeStyle = glint;
-        g.stroke(rimIn);
-        const shoulder = g.createRadialGradient(W * 0.2, H * 0.085, 0, W * 0.2, H * 0.085, W * 0.3);
-        shoulder.addColorStop(0, `rgba(255, 255, 255, ${0.8 + light * 0.2})`);
-        shoulder.addColorStop(1, 'rgba(255, 255, 255, 0)');
-        g.strokeStyle = shoulder;
-        g.stroke(rimIn);
+        // 高光里最亮的一小段，在两根窗柱上慢慢上下游走
+        const at = 0.36 + 0.08 * Math.sin(now / 1400);
+        const hot = g.createLinearGradient(0, 0, 0, H);
+        hot.addColorStop(at - 0.16, 'rgba(255, 255, 255, 0)');
+        hot.addColorStop(at, `rgba(255, 255, 255, ${0.55 + light * 0.4})`);
+        hot.addColorStop(at + 0.18, 'rgba(255, 255, 255, 0)');
+        g.strokeStyle = hot;
+        for (const [width, alpha] of [[7, 0.1], [4, 0.2], [1.6, 0.7]]) {
+          g.lineWidth = width;
+          g.globalAlpha = alpha;
+          g.stroke(glint);
+        }
+        g.globalCompositeOperation = 'source-over';
 
         g.strokeStyle = '#e6f0ff';
         g.lineWidth = 0.6;
@@ -2642,6 +2834,8 @@
     $('viewerNext').addEventListener('click', () => view(current + 1, { x: w * 0.7, y: 0 }));
     $('cosmosBack').addEventListener('click', close);
     window.addEventListener('resize', () => { if (mode !== 'off') resize(); });
+    // 舱盖玻璃要逐像素算一次，趁还没人点相册先算好，免得点下去那一刻卡一下
+    setTimeout(() => { if (mode === 'off') resize(); }, 1800);
 
     return { open };
   })();
