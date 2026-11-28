@@ -1670,6 +1670,135 @@
       };
     })();
 
+    // 舱盖：窗框是一整道拱形的厚玻璃，外面一圈才是船壳。透过厚玻璃看到的不是正后方，而是被折过来的
+    // 旁边那一片，所以把隧道画面放大一点画进玻璃的形状里，光线穿过去的地方就会错开一截；边上再描倒角和高光
+    const canopy = (() => {
+      const pane = $('cockpitCanopy');
+      const g = pane.getContext('2d');
+      const EDGE = 4; // 驾驶舱四周比屏幕多出的一圈，和 .cockpit 的 inset 对应
+      // 拱的左半边，坐标是占驾驶舱宽高的百分比：起点，然后每段是 [控制点, 控制点, 终点]，右半边照着镜像
+      const INNER = [[3, 94], [[4.2, 60], [6.3, 16.3], [12, 13]], [[20.6, 9], [36, 5.2], [50, 5.2]]];
+      const OUTER = [[0, 72], [[0.4, 50], [2.85, 14.75], [9.3, 11.75]], [[17.9, 7.75], [35, 3.2], [50, 3.2]]];
+      let W = 0;
+      let H = 0;
+      let rim = null;
+      let hull = null;
+      let rimIn = null;
+      let rimOut = null;
+      let scratches = [];
+
+      const trace = (path, half, mirror, move) => {
+        const X = (u) => ((mirror ? 100 - u : u) / 100) * W;
+        const Y = (v) => (v / 100) * H;
+        const [start, ...segs] = half;
+        if (move) path.moveTo(X(start[0]), Y(start[1]));
+        else path.lineTo(X(start[0]), Y(start[1]));
+        for (const [a, b, to] of segs) path.bezierCurveTo(X(a[0]), Y(a[1]), X(b[0]), Y(b[1]), X(to[0]), Y(to[1]));
+        for (let i = segs.length - 1; i >= 0; i--) {
+          const [a, b] = segs[i];
+          const to = i ? segs[i - 1][2] : start;
+          path.bezierCurveTo(X(100 - b[0]), Y(b[1]), X(100 - a[0]), Y(a[1]), X(100 - to[0]), Y(to[1]));
+        }
+        return path;
+      };
+
+      const resize = () => {
+        W = w + EDGE * 2;
+        H = h + EDGE * 2;
+        pane.width = W * dpr;
+        pane.height = H * dpr;
+        g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        rim = trace(new Path2D(), INNER, false, true);
+        rim.lineTo(W, H * 0.94);
+        trace(rim, OUTER, true, false);
+        rim.lineTo(0, H * 0.94);
+        rim.closePath();
+        hull = trace(new Path2D(), OUTER, false, true);
+        hull.lineTo(W, 0);
+        hull.lineTo(0, 0);
+        hull.closePath();
+        rimIn = trace(new Path2D(), INNER, false, true);
+        rimOut = trace(new Path2D(), OUTER, false, true);
+        // 玻璃上的细划痕：迎着光看是绕着光源的一圈圈弧
+        scratches = Array.from({ length: 54 }, () => ({ r: rand(0.1, 0.66), a: rand(0, Math.PI * 2), len: rand(0.05, 0.24) }));
+      };
+
+      const clear = () => g.clearRect(0, 0, W, H);
+
+      // light 是隧道有多亮（0–1），cx / cy 是隧道尽头在屏幕上的位置
+      const draw = (now, light, cx, cy) => {
+        g.clearRect(0, 0, W, H);
+        const bend = (scale, alpha) => {
+          g.globalAlpha = alpha;
+          g.drawImage(canvas, EDGE + cx - cx * scale, EDGE + cy - cy * scale, w * scale, h * scale);
+        };
+
+        // 玻璃外面的船壳，只在两个上角露一点
+        const shell = g.createLinearGradient(0, 0, 0, H * 0.72);
+        shell.addColorStop(0, 'rgba(2, 3, 9, 0.96)');
+        shell.addColorStop(1, 'rgba(6, 9, 24, 0.9)');
+        g.fillStyle = shell;
+        g.fill(hull);
+
+        g.save();
+        g.clip(rim);
+        g.fillStyle = 'rgba(4, 6, 20, 0.86)';
+        g.fillRect(0, 0, W, H);
+        bend(1.1, 1);
+        // 玻璃内壁又反了一次，叠一层更淡、错得更远的影子
+        g.globalCompositeOperation = 'lighter';
+        bend(0.9, 0.4);
+        g.globalAlpha = 1;
+        g.fillStyle = `rgba(140, 195, 255, ${0.05 + light * 0.07})`;
+        g.fillRect(0, 0, W, H);
+        // 倒角：越靠棱越亮，厚玻璃的断面带一点青
+        g.strokeStyle = '#c6ecff';
+        for (const [width, alpha] of [[28, 0.03], [15, 0.045], [6, 0.085]]) {
+          g.lineWidth = width;
+          g.globalAlpha = alpha * (1 + light * 1.4);
+          g.stroke(rimIn);
+        }
+        g.lineWidth = 10;
+        g.globalAlpha = 0.06 + light * 0.06;
+        g.stroke(rimOut);
+        g.restore();
+
+        // 棱线
+        g.lineWidth = 1.2;
+        g.strokeStyle = `rgba(214, 234, 255, ${0.3 + light * 0.3})`;
+        g.stroke(rimIn);
+        g.lineWidth = 1;
+        g.strokeStyle = `rgba(170, 205, 255, ${0.18 + light * 0.2})`;
+        g.stroke(rimOut);
+        // 棱上的高光：窗柱上各有一小段特别亮，慢慢上下游走；左肩上兜着一片
+        const at = 0.34 + 0.07 * Math.sin(now / 1400);
+        const glint = g.createLinearGradient(0, 0, 0, H);
+        glint.addColorStop(at - 0.13, 'rgba(255, 255, 255, 0)');
+        glint.addColorStop(at, `rgba(255, 255, 255, ${0.75 + light * 0.25})`);
+        glint.addColorStop(at + 0.15, 'rgba(255, 255, 255, 0)');
+        g.lineWidth = 1.6;
+        g.strokeStyle = glint;
+        g.stroke(rimIn);
+        const shoulder = g.createRadialGradient(W * 0.2, H * 0.085, 0, W * 0.2, H * 0.085, W * 0.3);
+        shoulder.addColorStop(0, `rgba(255, 255, 255, ${0.8 + light * 0.2})`);
+        shoulder.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        g.strokeStyle = shoulder;
+        g.stroke(rimIn);
+
+        g.strokeStyle = '#e6f0ff';
+        g.lineWidth = 0.6;
+        for (const s of scratches) {
+          g.globalAlpha = (0.02 + light * 0.13) * (1 - s.r);
+          g.beginPath();
+          g.arc(EDGE + cx, EDGE + cy, s.r * W, s.a, s.a + s.len);
+          g.stroke();
+        }
+        g.globalAlpha = 1;
+      };
+
+      return { resize, clear, draw };
+    })();
+
     const resize = () => {
       dpr = Math.min(window.devicePixelRatio || 1, 2);
       w = app.clientWidth;
@@ -1681,6 +1810,7 @@
       canvas.height = h * dpr;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (deep) deep.resize();
+      canopy.resize();
     };
 
     // 星星里的圆形小照片
@@ -1942,6 +2072,7 @@
       }
       flybys = flybys.filter((f) => f.z > 0.05);
       ctx.restore();
+      canopy.draw(now, surge, cx, cy);
 
       // 驾驶舱：仪表跟着推力走，钟往回转，挂饰被甩起来，整个舱在抖
       if (entry.from > entry.to) spin += surge * step * 0.06;
@@ -1951,7 +2082,6 @@
       cockpit.style.transform = `translate3d(${(rand(-1, 1) * surge * 2.2).toFixed(2)}px, ${(rand(-1, 1) * surge * 2.2).toFixed(2)}px, 0)`;
 
       setText('warpDate', entry.monthly ? `${year}.${pad((months % 12) + 1)}` : String(year));
-      setText('warpLabel', p < 0.16 ? '时光引擎 启动' : q >= 1 ? '已到达' : entry.from > entry.to ? '时光倒流中' : '就停在此刻');
       setText('hudSpeed', `${(surge * 0.99).toFixed(2)} c`);
       setText('hudBack', `${entry.from - months} 个月`);
 
@@ -2280,7 +2410,7 @@
       spin = 0;
       // 今年的相册不用往回飞，飞一小段就到
       warpMs = entry.from > entry.to ? WARP_MS : 3000;
-      setText('warpDest', `目的地 ${(item.date || '').slice(0, 7)}`);
+      canopy.clear();
       streaks = Array.from({ length: 380 }, () => ({
         a: rand(0, Math.PI * 2),
         r: rand(0.08, 1.2),

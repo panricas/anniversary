@@ -13,7 +13,7 @@
     <link rel="apple-touch-icon" href="./icon.png" />
     <link rel="icon" type="image/png" href="./icon.png" />
     <title>相爱五周年</title>
-    <link rel="stylesheet" href="./index.css?v=1795859236" />
+    <link rel="stylesheet" href="./index.css?v=1795860657" />
   </head>
   <body>
     <div class="app" id="app">
@@ -126,27 +126,8 @@
           <p class="hud-data hud-left"><span>航速</span><b id="hudSpeed"></b></p>
           <p class="hud-data hud-right"><span>已回溯</span><b id="hudBack"></b></p>
 
-          <!-- 舱盖只留两根贴着屏幕边的窗柱和头顶一道弧，其余全是玻璃 -->
-          <svg class="cockpit-canopy" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-            <defs>
-              <linearGradient id="strutLeft" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0" stop-color="#03040b" stop-opacity="0.9" />
-                <stop offset="1" stop-color="#0b1026" stop-opacity="0.35" />
-              </linearGradient>
-              <linearGradient id="strutRight" x1="1" y1="0" x2="0" y2="0">
-                <stop offset="0" stop-color="#03040b" stop-opacity="0.9" />
-                <stop offset="1" stop-color="#0b1026" stop-opacity="0.35" />
-              </linearGradient>
-              <linearGradient id="strutTop" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#03040b" stop-opacity="0.9" />
-                <stop offset="1" stop-color="#0b1026" stop-opacity="0.3" />
-              </linearGradient>
-            </defs>
-            <path fill="url(#strutTop)" d="M0 0H100V1.600Q50 4.600 0 1.600Z" />
-            <path fill="url(#strutLeft)" d="M0 0H6.500Q2.200 34 0 82Z" />
-            <path fill="url(#strutRight)" d="M100 0H93.500Q97.800 34 100 82Z" />
-            <path class="strut-edge" d="M6.500 0Q2.200 34 0 82M93.500 0Q97.800 34 100 82M0 1.600Q50 4.600 100 1.600" />
-          </svg>
+          <!-- 舱盖：窗框是一整道拱形的厚玻璃，外面的光穿过它会被折弯，由脚本每帧画 -->
+          <canvas class="cockpit-canopy" id="cockpitCanopy"></canvas>
 
           <!-- 挂在舱顶的小爱心，加速时会被甩起来 -->
           <div class="charm">
@@ -156,69 +137,59 @@
 
           <p class="warp-skip">轻触跳过</p>
 
-          <!-- 仪表台压得很低，只露出读数和两块表，不挡前面的路 -->
-          <svg class="cockpit-dash" viewBox="0 0 390 150" aria-hidden="true">
-            <defs>
-              <linearGradient id="dashFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#141a36" stop-opacity="0.9" />
-                <stop offset="0.35" stop-color="#090c1c" stop-opacity="0.96" />
-                <stop offset="1" stop-color="#03040a" />
-              </linearGradient>
-              <radialGradient id="dashLight" cx="0.5" cy="0" r="0.8">
-                <stop offset="0" stop-color="#cfe0ff" stop-opacity="0.7" />
-                <stop offset="0.5" stop-color="#7f9cff" stop-opacity="0.2" />
-                <stop offset="1" stop-color="#6c8cff" stop-opacity="0" />
-              </radialGradient>
-              <linearGradient id="dashMetal" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#39446c" />
-                <stop offset="1" stop-color="#11152b" />
-              </linearGradient>
-              <radialGradient id="dashDial" cx="0.5" cy="0.4" r="0.7">
-                <stop offset="0" stop-color="#0d1530" />
-                <stop offset="1" stop-color="#04060f" />
-              </radialGradient>
-              <clipPath id="dashClip">
-                <path d="M0 150V58C46 50 96 44 128 40 150 37 162 20 195 20s45 17 67 20c32 4 82 10 128 18v92Z" />
-              </clipPath>
-              <pattern id="dashScan" width="4" height="3" patternUnits="userSpaceOnUse">
-                <rect width="4" height="1" fill="#9fc4ff" opacity="0.07" />
-              </pattern>
-            </defs>
+          <!-- 仪表台压得很低，只有一个年月读数和两块表；下面垫一条，让表不会被手机底部的横条压住 -->
+          <div class="cockpit-dash">
+            <svg viewBox="0 0 390 108" aria-hidden="true">
+              <defs>
+                <linearGradient id="dashFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#141a36" stop-opacity="0.9" />
+                  <stop offset="0.35" stop-color="#090c1c" stop-opacity="0.96" />
+                  <stop offset="1" stop-color="#03040a" />
+                </linearGradient>
+                <radialGradient id="dashLight" cx="0.5" cy="0" r="0.8">
+                  <stop offset="0" stop-color="#cfe0ff" stop-opacity="0.7" />
+                  <stop offset="0.5" stop-color="#7f9cff" stop-opacity="0.2" />
+                  <stop offset="1" stop-color="#6c8cff" stop-opacity="0" />
+                </radialGradient>
+                <radialGradient id="dashDial" cx="0.5" cy="0.4" r="0.7">
+                  <stop offset="0" stop-color="#0d1530" />
+                  <stop offset="1" stop-color="#04060f" />
+                </radialGradient>
+                <linearGradient id="screenGlass" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#1a2a5c" stop-opacity="0.55" />
+                  <stop offset="0.5" stop-color="#070d24" stop-opacity="0.7" />
+                  <stop offset="1" stop-color="#050a1c" stop-opacity="0.85" />
+                </linearGradient>
+                <clipPath id="dashClip">
+                  <path d="M0 108V40C46 34 96 29 128 26 150 24 162 12 195 12s45 12 67 14c32 3 82 8 128 14v68Z" />
+                </clipPath>
+              </defs>
 
-            <path d="M0 150V58C46 50 96 44 128 40 150 37 162 20 195 20s45 17 67 20c32 4 82 10 128 18v92Z" fill="url(#dashFill)" />
-            <rect class="dash-light" width="390" height="150" fill="url(#dashLight)" clip-path="url(#dashClip)" />
-            <path class="dash-edge" d="M0 58C46 50 96 44 128 40 150 37 162 20 195 20s45 17 67 20c32 4 82 10 128 18" />
+              <path d="M0 108V40C46 34 96 29 128 26 150 24 162 12 195 12s45 12 67 14c32 3 82 8 128 14v68Z" fill="url(#dashFill)" />
+              <rect class="dash-light" width="390" height="108" fill="url(#dashLight)" clip-path="url(#dashClip)" />
+              <path class="dash-edge" d="M0 40C46 34 96 29 128 26 150 24 162 12 195 12s45 12 67 14c32 3 82 8 128 14" />
 
-            <!-- 中间的主屏：年月一路往回跳 -->
-            <rect class="screen" x="127" y="36" width="136" height="88" rx="9" />
-            <rect x="127" y="36" width="136" height="88" rx="9" fill="url(#dashScan)" />
-            <text class="screen-label" id="warpLabel" x="197" y="56"></text>
-            <text class="screen-date" id="warpDate" x="195" y="93"></text>
-            <text class="screen-dest" id="warpDest" x="196" y="113"></text>
+              <!-- 中间的读数：年月一路往回跳 -->
+              <rect class="screen" x="129" y="28" width="132" height="56" rx="10" />
+              <path class="screen-shine" d="M139 29.500h112" />
+              <text class="screen-date" id="warpDate" x="195" y="68"></text>
 
-            <!-- 左边：航速表 -->
-            <circle class="dial" cx="62" cy="106" r="30" />
-            <circle class="dial-ticks" cx="62" cy="106" r="24" />
-            <path class="dial-arc" d="M45 123A24 24 0 1 1 79 123" />
-            <line class="gauge-needle" x1="62" y1="106" x2="62" y2="85" />
-            <circle class="dial-hub" cx="62" cy="106" r="3" />
-            <text class="dial-label" x="63" y="121">航速</text>
+              <!-- 左边：航速表 -->
+              <circle class="dial" cx="62" cy="76" r="27" />
+              <circle class="dial-ticks" cx="62" cy="76" r="21" />
+              <path class="dial-arc" d="M47.150 90.850A21 21 0 1 1 76.850 90.850" />
+              <line class="gauge-needle" x1="62" y1="76" x2="62" y2="58" />
+              <circle class="dial-hub" cx="62" cy="76" r="2.800" />
 
-            <!-- 右边：倒着走的钟 -->
-            <circle class="dial" cx="328" cy="106" r="30" />
-            <circle class="clock-ticks" cx="328" cy="106" r="25" />
-            <line class="clock-hour" x1="328" y1="106" x2="328" y2="93" />
-            <line class="clock-minute" x1="328" y1="106" x2="328" y2="85" />
-            <circle class="dial-hub" cx="328" cy="106" r="3" />
-            <text class="dial-label" x="329" y="121">时间</text>
-
-            <!-- 操纵杆只露个头 -->
-            <g class="yoke">
-              <rect x="150" y="138" width="90" height="12" rx="6" fill="url(#dashMetal)" />
-              <circle cx="195" cy="146" r="14" fill="url(#dashMetal)" />
-              <path class="yoke-heart" d="M195 153c-5.200-3.900-7.400-6.700-7.400-9.800a4 4 0 0 1 7.400-2.100 4 4 0 0 1 7.400 2.100c0 3.100-2.200 5.900-7.400 9.800z" />
-            </g>
-          </svg>
+              <!-- 右边：倒着走的钟 -->
+              <circle class="dial" cx="328" cy="76" r="27" />
+              <circle class="clock-ticks" cx="328" cy="76" r="22" />
+              <line class="clock-hour" x1="328" y1="76" x2="328" y2="64" />
+              <line class="clock-minute" x1="328" y1="76" x2="328" y2="57" />
+              <circle class="dial-hub" cx="328" cy="76" r="2.800" />
+            </svg>
+            <i class="dash-base"></i>
+          </div>
         </div>
 
         <header class="cosmos-head">
@@ -253,7 +224,7 @@
       </div>
     </div>
 
-    <script src="./data.js?v=1795859236"></script>
-    <script src="./index.js?v=1795859236"></script>
+    <script src="./data.js?v=1795860657"></script>
+    <script src="./index.js?v=1795860657"></script>
   </body>
 </html>
