@@ -197,7 +197,7 @@
 
     // 音效现场合成，不用另外带音频文件。
     // 走的是八音盒那一路：一颗颗叮咚的小音、竖琴似的拨弦、弦乐似的暖垫，都泡在长长的回响里。
-    // 所有的音都取自同一个五声音阶，连着点、叠着响都是和谐的；手机喇叭放不出低音，所以最低只到三百赫兹上下
+    // 所有的音都取自同一个五声音阶，连着点、叠着响都是和谐的；手机喇叭放不出低音，所以最低只到两百赫兹上下
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     let ctx = null;
     let master = null;
@@ -228,8 +228,8 @@
       src.stop(t + length + 0.05);
       return src;
     };
-    // D 大调五声音阶，从中央 C 上面的 D 数起，每五个升一个八度
-    const SCALE = [293.66, 329.63, 369.99, 440, 493.88];
+    // 降 A 大调五声音阶（和背景音乐同一个调，叠在它上面不打架），从中央 C 下面的降 A 数起，每五个升一个八度
+    const SCALE = [207.65, 233.08, 261.63, 311.13, 349.23];
     const tone = (step) => SCALE[step % 5] * Math.pow(2, Math.floor(step / 5));
     // 八音盒的一颗音：敲一下就慢慢散掉，上面带一个高八度的泛音和一点不成整数倍的「叮」
     const chime = (step, delay, length, peak, wet) => {
@@ -324,29 +324,29 @@
         chime(step, 0, 1.2, 0.4, 0.5);
         pluck(step - 5, 0, 0.7, 0.14, 0.4);
       },
-      soft: () => chime([10, 11, 12, 13][Math.floor(Math.random() * 4)], 0, 0.9, 0.14, 0.7),
+      soft: () => chime([13, 14, 15, 17][Math.floor(Math.random() * 4)], 0, 0.9, 0.14, 0.7),
       swipe: () => { sweep(0, 0.3, 0.08, 2400, 900, 0.3, 0.3); run([5, 7, 8], 0, 0.045, 0.7, 0.24, 0.4); },
       close: () => { chime(8, 0, 0.9, 0.3, 0.5); chime(5, 0.11, 1.3, 0.3, 0.6); pluck(0, 0.11, 0.9, 0.14, 0.4); },
       open: () => {
         run([0, 3, 5, 7, 8], 0, 0.07, 1.2, 0.3, 0.5);
         pad([0, 3, 7], 0.2, 1.8, 0.2, 0.5);
-        chime(10, 0.38, 1.6, 0.24, 0.9);
+        chime(15, 0.38, 1.6, 0.22, 0.9);
       },
-      star: () => { pluck(5, 0, 1, 0.22, 0.6); chime(10, 0.02, 1.6, 0.3, 0.9); chime(13, 0.1, 1.8, 0.18, 0.9); },
+      star: () => { pluck(5, 0, 1, 0.22, 0.6); chime(15, 0.02, 1.6, 0.28, 0.9); chime(18, 0.1, 1.8, 0.14, 0.9); },
       // 两拨和弦像两下心跳，第二下带出一层暖垫，上面几颗音慢慢往高处飘
       heart: () => {
         run([0, 3], 0, 0, 0.7, 0.3, 0.4);
         run([2, 5], 0.26, 0, 1.1, 0.3, 0.5);
         pad([0, 3, 7], 0.26, 2.6, 0.24, 0.6);
-        [8, 10, 12, 13].forEach((step, i) => chime(step, 0.56 + i * 0.17, 1.7, 0.2, 0.9));
+        [10, 12, 13, 15].forEach((step, i) => chime(step, 0.56 + i * 0.17, 1.7, 0.2, 0.9));
       },
       // 竖琴从低到高刮上去，托起一层亮起来的暖垫，接着就是穿越的风声
       launch: () => {
         run([0, 2, 3, 5, 7, 8, 10, 12], 0, 0.06, 1, 0.26, 0.5);
         sweep(0.1, 0.6, 0.1, 600, 3600, 0.9, 0.4);
         pad([0, 3, 7, 8], 0.3, 2.4, 0.28, 0.5);
-        chime(10, 0.52, 2, 0.32, 0.9);
-        chime(13, 0.62, 2.2, 0.2, 0.9);
+        chime(15, 0.52, 2, 0.3, 0.9);
+        chime(18, 0.62, 2.2, 0.16, 0.9);
       }
     };
     const ready = () => {
@@ -894,81 +894,130 @@
     return { firework, burst, rain, size: () => ({ w, h }) };
   })();
 
-  // 音乐：只有一个播放器。
-  // 时间线每个节点可以各带一首歌（song）：飞船到站时响起，点「返回」离开星空就停。
-  // 另外可以有一首背景音乐（data.music），在正文里放，右上角的 ♪ 按钮管的是它
+  // 音乐：两个播放器。
+  // 背景音乐（data.music）一进页面就放，整页都是它；进星空相册时停住，出来从停下的地方接着放，右上角的 ♪ 按钮管的是它。
+  // 时间线每个节点可以各带一首歌（song）：飞船到站时响起，点「返回」离开星空就停
   const music = (() => {
     const button = $('music');
     const label = $('cosmosSong');
-    const audio = new Audio();
-    audio.loop = true;
-    audio.preload = 'auto';
+    const player = () => {
+      const el = new Audio();
+      el.loop = true;
+      el.preload = 'auto';
+      return el;
+    };
+    const bgm = player();
+    const audio = player();
     let src = '';
-    // 她自己按 ♪ 把背景音乐停了：回到正文不再自动接上，等她再按
+    // 她自己按 ♪ 把背景音乐停了：之后不再自动接上，等她再按
     let off = false;
+    // 人在星空相册里，背景音乐让位
+    let away = false;
     // 已经在点按里静音起播，等到站再出声
     let queued = false;
+    // 这一年的歌到站后应该是响着的
+    let singing = false;
     let held = false;
-    let fading = 0;
 
-    const sync = () => button.classList.toggle('is-playing', !audio.paused);
-    audio.addEventListener('play', sync);
-    audio.addEventListener('pause', sync);
+    const sync = () => button.classList.toggle('is-playing', !bgm.paused);
+    bgm.addEventListener('play', sync);
+    bgm.addEventListener('pause', sync);
     // 文件不在或者放不了，就不留一个点了没反应的按钮
+    bgm.addEventListener('error', () => {
+      button.hidden = true;
+    });
     audio.addEventListener('error', () => {
       src = '';
       queued = false;
+      singing = false;
       audio.muted = false;
-      button.hidden = true;
       label.textContent = '';
       label.hidden = true;
     });
     button.addEventListener('click', (e) => {
       e.stopPropagation();
-      off = !audio.paused;
-      if (off) audio.pause();
-      else audio.play().catch(() => {});
+      off = !bgm.paused;
+      if (off) bgm.pause();
+      else bgm.play().catch(() => {});
     });
 
-    const reset = () => {
-      clearInterval(fading);
-      audio.muted = false;
-      audio.volume = 1;
+    // 音量的渐变。iPhone 不让网页调音量，在它上面渐强等于直接开始、渐弱等于稍等一下就停
+    const timers = new Map();
+    const settle = (el) => {
+      clearInterval(timers.get(el));
+      el.volume = 1;
+    };
+    const ramp = (el, from, step, every) => {
+      clearInterval(timers.get(el));
+      let v = from;
+      el.volume = v;
+      timers.set(el, setInterval(() => {
+        v += step;
+        if (v > 0 && v < 1) {
+          el.volume = v;
+          return;
+        }
+        clearInterval(timers.get(el));
+        if (step < 0) el.pause();
+        el.volume = 1;
+      }, every));
     };
     const load = (next) => {
-      reset();
+      settle(audio);
+      audio.muted = false;
       src = next;
       audio.src = next;
     };
-    const bgm = () => {
+
+    // 背景音乐该响的时候让它响：没被她关掉，人也不在相册里
+    const resume = () => {
+      if (!data.music || off || away) return;
+      settle(bgm);
+      if (bgm.paused) bgm.play().catch(() => {});
+    };
+    // 每一下触碰都顺手把该响却没响的接上：浏览器不许网页没被碰过就出声，
+    // 切出去再回来时也可能不让自己接着放，都靠这里补上
+    const wake = (e) => {
+      if (e && e.target.closest && e.target.closest('#music')) return;
+      resume();
+      if (singing && !held && audio.paused) audio.play().catch(() => {});
+    };
+    const start = () => {
       if (!data.music) return;
-      load(data.music);
+      bgm.src = data.music;
       button.hidden = false;
-      if (!off) audio.play().catch(() => {});
+      resume();
+      ['touchend', 'click', 'keydown'].forEach((type) => document.addEventListener(type, wake, true));
+      // 微信里可以借它的桥，不用等她碰屏幕
+      if (window.WeixinJSBridge) window.WeixinJSBridge.invoke('getNetworkType', {}, () => wake());
+      else document.addEventListener('WeixinJSBridgeReady', () => wake(), { once: true });
     };
-    // 音量慢慢推上来。iPhone 不让网页调音量，在它上面等于直接开始
-    const swell = () => {
-      clearInterval(fading);
-      let v = 0;
-      audio.volume = 0;
-      fading = setInterval(() => {
-        v = Math.min(1, v + 0.05);
-        audio.volume = v;
-        if (v >= 1) clearInterval(fading);
-      }, 80);
-    };
+    // 切到别的应用或者锁屏就先停，回来接着放
+    let parked = [];
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        parked = [bgm, audio].filter((el) => !el.paused);
+        parked.forEach((el) => el.pause());
+        return;
+      }
+      parked.splice(0).forEach((el) => el.play().catch(() => {}));
+    });
 
     return {
-      play: bgm,
-      // 进相册的那一下点按里调用。手机只准在点按里开始播放，而到站是几秒以后的事，
-      // 所以先静音放起来，到站时拨回开头、打开声音
+      play: start,
+      // 进相册的那一下点按里调用：背景音乐收声停住。这一年有歌的话，手机只准在点按里开始播放，
+      // 而到站是几秒以后的事，所以先静音放起来，到站时拨回开头、打开声音
       cue(song, name) {
+        away = true;
+        if (!bgm.paused) ramp(bgm, bgm.volume, -0.2, 40);
         label.textContent = song && name ? `♪ ${name}` : '';
         label.hidden = true;
-        // 这一年没配歌：星空里是安静的（有背景音乐的话，它接着放）
+        // 这一年没配歌：星空里是安静的
         if (!song) return;
-        if (song === src) reset();
-        else load(song);
+        if (song === src) {
+          settle(audio);
+          audio.muted = false;
+        } else load(song);
         queued = true;
         audio.muted = true;
         audio.play().catch(() => {});
@@ -977,38 +1026,26 @@
         label.hidden = !label.textContent;
         if (!queued) return;
         queued = false;
+        singing = true;
         try { audio.currentTime = 0; } catch (err) {}
         audio.muted = false;
-        swell();
+        ramp(audio, 0, 0.05, 80);
       },
-      // 点「返回」离开星空：这一年的歌收声停掉，有背景音乐就换回背景音乐
+      // 点「返回」离开星空：这一年的歌收声停掉，背景音乐从刚才停下的地方接着放
       stop() {
         const silent = queued;
         queued = false;
+        singing = false;
         held = false;
         label.hidden = true;
-        if (data.music) {
-          if (src !== data.music) bgm();
-          return;
-        }
-        clearInterval(fading);
-        if (audio.paused) return;
-        if (silent) {
+        if (audio.paused) settle(audio);
+        else if (silent) {
+          settle(audio);
           audio.pause();
           audio.muted = false;
-          return;
-        }
-        let v = audio.volume;
-        fading = setInterval(() => {
-          v -= 0.2;
-          if (v > 0) {
-            audio.volume = v;
-            return;
-          }
-          clearInterval(fading);
-          audio.pause();
-          audio.volume = 1;
-        }, 40);
+        } else ramp(audio, audio.volume, -0.2, 40);
+        away = false;
+        resume();
       },
       // hold / release：星空相册里播视频时先停一下，看完再接着放
       hold() {
@@ -3010,8 +3047,8 @@
   renderEnding();
   feedback.mount();
   // 开场结束后再启动翻页逻辑，封面的进场动画才不会在开场底下白白播完
+  music.play();
   intro(() => {
-    music.play();
     setupPages();
   });
 })();
