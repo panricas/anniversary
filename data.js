@@ -75,6 +75,8 @@ window.ANNIVERSARY = {
       title: '（第三年的一件事）',
       text: '（只有你们两个人懂的梗，写在这里最合适。）',
       photo: 'photos/t4.jpg',
+      song: 'music/moli.m4a',
+      songName: '魔力 · S.H.E',
       album: [
         { src: 'photos/2024/01.jpg', title: '（照片标题）', text: '（写一句。）' },
         { src: 'photos/2024/02.jpg', title: '（照片标题）', text: '（写一句。）' },
