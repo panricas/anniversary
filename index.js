@@ -196,17 +196,16 @@
     };
 
     // 音效现场合成，不用另外带音频文件。
-    // 走的是电影预告片那一路：往下砸的重击、铜管似的长音、大厅里的回响。
-    // 手机喇叭放不出一百多赫兹以下的声音，所以低音都先压一遍，靠压出来的泛音让人「听见」那一下
+    // 走的是八音盒那一路：一颗颗叮咚的小音、竖琴似的拨弦、弦乐似的暖垫，都泡在长长的回响里。
+    // 所有的音都取自同一个五声音阶，连着点、叠着响都是和谐的；手机喇叭放不出低音，所以最低只到三百赫兹上下
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     let ctx = null;
     let master = null;
     // 回响的入口
     let hall = null;
-    // 一段白噪声：撞上去的那声「嘭」、扫过去的风都从它来
+    // 一段白噪声：扫过去的那阵风从它来
     let dust = null;
     const bend = (fn) => Float32Array.from({ length: 1025 }, (_, i) => fn(i / 512 - 1));
-    const GRIT = bend((x) => Math.tanh(3 * x));
     // 出口的软限幅，输入按 ±3 算：小声原样过，叠得太响的地方压圆，不至于爆音
     const CEILING = bend((x) => {
       const u = Math.abs(3 * x);
@@ -229,71 +228,72 @@
       src.stop(t + length + 0.05);
       return src;
     };
-    // 重击，像一面大鼓：往下掉的鼓音（上面叠一个高八度的，小喇叭靠它才听得见），
-    // 加上鼓槌敲上去的那声脆响和一团往下沉的闷响
-    const boom = (delay, peak, from, to, length, wet) => {
+    // D 大调五声音阶，从中央 C 上面的 D 数起，每五个升一个八度
+    const SCALE = [293.66, 329.63, 369.99, 440, 493.88];
+    const tone = (step) => SCALE[step % 5] * Math.pow(2, Math.floor(step / 5));
+    // 八音盒的一颗音：敲一下就慢慢散掉，上面带一个高八度的泛音和一点不成整数倍的「叮」
+    const chime = (step, delay, length, peak, wet) => {
       const t = ctx.currentTime + delay;
-      const drive = ctx.createWaveShaper();
-      drive.curve = GRIT;
-      const level = ctx.createGain();
-      level.gain.value = peak;
-      drive.connect(level);
-      const drum = (ratio, share, span, type) => {
+      [[1, 1, 1], [2, 0.28, 0.6], [4.07, 0.1, 0.22]].forEach(([ratio, share, span]) => {
         const osc = ctx.createOscillator();
-        osc.type = type;
-        osc.frequency.setValueAtTime(from * ratio, t);
-        osc.frequency.exponentialRampToValueAtTime(to * ratio, t + span * 0.45);
-        const body = ctx.createGain();
-        body.gain.setValueAtTime(0.0001, t);
-        body.gain.exponentialRampToValueAtTime(share, t + 0.005);
-        body.gain.exponentialRampToValueAtTime(0.0001, t + span);
-        osc.connect(body);
-        body.connect(drive);
+        osc.frequency.value = tone(step) * ratio;
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(peak * share, t + 0.006);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + length * span);
+        osc.connect(gain);
+        emit(gain, wet);
         osc.start(t);
-        osc.stop(t + span + 0.05);
-      };
-      drum(1, 1, length, 'sine');
-      drum(2, 0.7, length * 0.7, 'triangle');
-      drum(7, 0.5, 0.05, 'sine');
-
-      const thud = ctx.createBiquadFilter();
-      thud.type = 'lowpass';
-      thud.frequency.setValueAtTime(6000, t);
-      thud.frequency.exponentialRampToValueAtTime(420, t + 0.22);
-      const crack = ctx.createGain();
-      crack.gain.setValueAtTime(0.0001, t);
-      crack.gain.exponentialRampToValueAtTime(1.5, t + 0.004);
-      crack.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
-      noise(t, 0.32).connect(thud);
-      thud.connect(crack);
-      crack.connect(level);
-      emit(level, wet);
+        osc.stop(t + length * span + 0.05);
+      });
     };
-    // 铜管似的长音：几把略微跑调的锯齿波叠在一起，滤波器猛地张开再慢慢合上
-    const braam = (freq, delay, length, peak, wet) => {
+    // 竖琴似的一拨：两根略微错开的弦，拨下去是亮的，越响越暗
+    const pluck = (step, delay, length, peak, wet) => {
+      const t = ctx.currentTime + delay;
+      const freq = tone(step);
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(Math.min(freq * 7, 7000), t);
+      filter.frequency.exponentialRampToValueAtTime(freq * 1.6, t + length * 0.6);
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(peak, t + 0.005);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + length);
+      [0.998, 1.003].forEach((ratio) => {
+        const osc = ctx.createOscillator();
+        osc.type = 'triangle';
+        osc.frequency.value = freq * ratio;
+        osc.connect(filter);
+        osc.start(t);
+        osc.stop(t + length + 0.05);
+      });
+      filter.connect(gain);
+      emit(gain, wet);
+    };
+    // 弦乐似的一层暖垫：一个和弦慢慢浮上来，再慢慢退下去
+    const pad = (steps, delay, length, peak, wet) => {
       const t = ctx.currentTime + delay;
       const filter = ctx.createBiquadFilter();
       filter.type = 'lowpass';
-      filter.Q.value = 1.5;
-      filter.frequency.setValueAtTime(300, t);
-      filter.frequency.exponentialRampToValueAtTime(3600, t + 0.09);
-      filter.frequency.exponentialRampToValueAtTime(520, t + length);
+      filter.Q.value = 0.5;
+      filter.frequency.setValueAtTime(900, t);
+      filter.frequency.exponentialRampToValueAtTime(2600, t + length * 0.4);
+      filter.frequency.exponentialRampToValueAtTime(1100, t + length);
       const gain = ctx.createGain();
       gain.gain.setValueAtTime(0.0001, t);
-      gain.gain.exponentialRampToValueAtTime(peak, t + 0.05);
-      gain.gain.exponentialRampToValueAtTime(peak * 0.55, t + length * 0.5);
+      gain.gain.exponentialRampToValueAtTime(peak, t + length * 0.35);
       gain.gain.exponentialRampToValueAtTime(0.0001, t + length);
-      [[1, 0.26], [1.007, 0.26], [0.993, 0.26], [2.004, 0.3], [3.003, 0.22], [4.01, 0.16]].forEach(([ratio, share]) => {
+      steps.forEach((step) => [0.996, 1.004].forEach((ratio) => {
         const osc = ctx.createOscillator();
-        osc.type = 'sawtooth';
-        osc.frequency.value = freq * ratio;
+        osc.type = 'triangle';
+        osc.frequency.value = tone(step) * ratio;
         const part = ctx.createGain();
-        part.gain.value = share;
+        part.gain.value = 1 / steps.length;
         osc.connect(part);
         part.connect(filter);
         osc.start(t);
         osc.stop(t + length + 0.05);
-      });
+      }));
       filter.connect(gain);
       emit(gain, wet);
     };
@@ -313,47 +313,40 @@
       band.connect(gain);
       emit(gain, wet);
     };
-    // 重击之上的一点金属余音，几乎全送进回响里
-    const glint = (freq, delay, length, peak, wet) => {
-      const t = ctx.currentTime + delay;
-      [[1, 1], [2.76, 0.35]].forEach(([ratio, share]) => {
-        const osc = ctx.createOscillator();
-        osc.frequency.value = freq * ratio;
-        const gain = ctx.createGain();
-        gain.gain.setValueAtTime(0.0001, t);
-        gain.gain.exponentialRampToValueAtTime(peak * share, t + 0.01);
-        gain.gain.exponentialRampToValueAtTime(0.0001, t + length * (ratio > 1 ? 0.5 : 1));
-        osc.connect(gain);
-        emit(gain, wet);
-        osc.start(t);
-        osc.stop(t + length + 0.05);
-      });
-    };
+    // 一串拨弦挨个响过去
+    const run = (steps, delay, gap, length, peak, wet) => steps.forEach((step, i) => pluck(step, delay + i * gap, length, peak, wet));
+    // 普通的点按不是每次同一个音，而是顺着一小段旋律往下走，连着点就像八音盒在转
+    const TUNE = [8, 10, 9, 7, 8, 12, 10, 9];
+    let bar = 0;
     const SOUND = {
-      tap: () => boom(0, 0.4, 260, 72, 0.36, 0.4),
-      soft: () => boom(0, 0.16, 220, 90, 0.22, 0.25),
-      swipe: () => { sweep(0, 0.34, 0.32, 2600, 500, 0.3, 0.3); boom(0.2, 0.2, 200, 80, 0.24, 0.3); },
-      close: () => { sweep(0, 0.3, 0.22, 1800, 300, 0.2, 0.4); boom(0.05, 0.34, 210, 60, 0.42, 0.5); },
+      tap: () => {
+        const step = TUNE[bar++ % TUNE.length];
+        chime(step, 0, 1.2, 0.4, 0.5);
+        pluck(step - 5, 0, 0.7, 0.14, 0.4);
+      },
+      soft: () => chime([10, 11, 12, 13][Math.floor(Math.random() * 4)], 0, 0.9, 0.14, 0.7),
+      swipe: () => { sweep(0, 0.3, 0.08, 2400, 900, 0.3, 0.3); run([5, 7, 8], 0, 0.045, 0.7, 0.24, 0.4); },
+      close: () => { chime(8, 0, 0.9, 0.3, 0.5); chime(5, 0.11, 1.3, 0.3, 0.6); pluck(0, 0.11, 0.9, 0.14, 0.4); },
       open: () => {
-        sweep(0, 0.28, 0.24, 400, 2400, 0.9, 0.3);
-        boom(0.26, 0.46, 280, 64, 0.6, 0.5);
-        braam(110, 0.26, 1.5, 0.3, 0.5);
-        braam(164.8, 0.26, 1.5, 0.2, 0.5);
+        run([0, 3, 5, 7, 8], 0, 0.07, 1.2, 0.3, 0.5);
+        pad([0, 3, 7], 0.2, 1.8, 0.2, 0.5);
+        chime(10, 0.38, 1.6, 0.24, 0.9);
       },
-      star: () => { boom(0, 0.34, 240, 76, 0.4, 0.5); glint(1174.7, 0.02, 1.4, 0.12, 0.9); glint(1760, 0.08, 1.6, 0.08, 0.9); },
-      // 两下心跳，第二下带出一个长音
+      star: () => { pluck(5, 0, 1, 0.22, 0.6); chime(10, 0.02, 1.6, 0.3, 0.9); chime(13, 0.1, 1.8, 0.18, 0.9); },
+      // 两拨和弦像两下心跳，第二下带出一层暖垫，上面几颗音慢慢往高处飘
       heart: () => {
-        boom(0, 0.46, 230, 66, 0.3, 0.4);
-        boom(0.24, 0.4, 200, 60, 0.42, 0.5);
-        braam(98, 0.24, 1.8, 0.24, 0.6);
-        braam(146.8, 0.24, 1.8, 0.17, 0.6);
+        run([0, 3], 0, 0, 0.7, 0.3, 0.4);
+        run([2, 5], 0.26, 0, 1.1, 0.3, 0.5);
+        pad([0, 3, 7], 0.26, 2.6, 0.24, 0.6);
+        [8, 10, 12, 13].forEach((step, i) => chime(step, 0.56 + i * 0.17, 1.7, 0.2, 0.9));
       },
-      // 先吸一口气，再整个砸下来，接着就是穿越的风声
+      // 竖琴从低到高刮上去，托起一层亮起来的暖垫，接着就是穿越的风声
       launch: () => {
-        sweep(0, 0.55, 0.3, 300, 3200, 0.92, 0.3);
-        boom(0.52, 0.55, 300, 58, 0.9, 0.6);
-        braam(73.4, 0.52, 2.2, 0.34, 0.5);
-        braam(110, 0.52, 2.2, 0.24, 0.5);
+        run([0, 2, 3, 5, 7, 8, 10, 12], 0, 0.06, 1, 0.26, 0.5);
+        sweep(0.1, 0.6, 0.1, 600, 3600, 0.9, 0.4);
+        pad([0, 3, 7, 8], 0.3, 2.4, 0.28, 0.5);
+        chime(10, 0.52, 2, 0.32, 0.9);
+        chime(13, 0.62, 2.2, 0.2, 0.9);
       }
     };
     const ready = () => {
@@ -385,7 +378,7 @@
         room.buffer = tail;
         const dark = ctx.createBiquadFilter();
         dark.type = 'lowpass';
-        dark.frequency.value = 3200;
+        dark.frequency.value = 5200;
         hall = ctx.createGain();
         hall.gain.value = 0.5;
         hall.connect(room);
